@@ -61,11 +61,6 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
           });
           return updated;
         });
-
-        // Also update the actual cell content
-        setCells(prev => prev.map(c =>
-          c.id === cellId ? { ...c, content: (streamingCells.get(cellId)?.content || '') + chunk } : c
-        ));
       }
 
       if (message.type === 'aiComplete' && message.payload?.cellId) {
@@ -423,11 +418,15 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
             const isStreaming = streamingCells.has(cell.id);
             const error = errorCells.get(cell.id);
             const streamingContent = streamingCells.get(cell.id)?.content;
+            // Convert streaming markdown to HTML for display
+            const displayContent = isStreaming && streamingContent
+              ? markdownToHtml(streamingContent)
+              : cell.content;
 
             return (
               <div key={cell.id} data-cell-id={cell.id}>
                 <Cell
-                  cell={isStreaming ? { ...cell, content: streamingContent || '' } : cell}
+                  cell={isStreaming ? { ...cell, content: displayContent } : cell}
                   isNew={cell.id === newCellId}
                   isStreaming={isStreaming}
                   isOnlyCell={cells.length === 1}
