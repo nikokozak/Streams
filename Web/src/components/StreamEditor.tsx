@@ -183,47 +183,70 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     const currentCell = cells[cellIndex];
     if (!currentCell || !stripHtml(currentCell.content).trim()) return;
 
-    // Gather prior cells for context
+    // Check if next cell is an AI response - if so, replace it instead of creating new
+    const nextCell = cells[cellIndex + 1];
+    const shouldReplace = nextCell?.type === 'aiResponse';
+
+    // Gather prior cells for context (exclude the AI response we're replacing)
     const priorCells = cells.slice(0, cellIndex + 1).map(c => ({
       id: c.id,
       content: c.content,
       type: c.type,
     }));
 
-    // Create AI response cell
-    const aiCellId = crypto.randomUUID();
-    const aiCell: CellType = {
-      id: aiCellId,
-      streamId: stream.id,
-      content: '',
-      type: 'aiResponse',
-      sourceBinding: null,
-      order: currentCell.order + 1,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
+    let aiCellId: string;
 
-    // Insert AI cell after current
-    setCells(prev => {
-      const updated = [...prev];
-      updated.splice(cellIndex + 1, 0, aiCell);
-      return updated.map((c, i) => ({ ...c, order: i }));
-    });
+    if (shouldReplace) {
+      // Reuse existing AI cell
+      aiCellId = nextCell.id;
 
-    // Save AI cell
-    bridge.send({
-      type: 'saveCell',
-      payload: {
+      // Clear its content
+      setCells(prev => prev.map(c =>
+        c.id === aiCellId ? { ...c, content: '', updatedAt: new Date().toISOString() } : c
+      ));
+    } else {
+      // Create new AI response cell
+      aiCellId = crypto.randomUUID();
+      const aiCell: CellType = {
         id: aiCellId,
         streamId: stream.id,
         content: '',
         type: 'aiResponse',
+        sourceBinding: null,
         order: currentCell.order + 1,
-      },
-    });
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      // Insert AI cell after current
+      setCells(prev => {
+        const updated = [...prev];
+        updated.splice(cellIndex + 1, 0, aiCell);
+        return updated.map((c, i) => ({ ...c, order: i }));
+      });
+
+      // Save new AI cell
+      bridge.send({
+        type: 'saveCell',
+        payload: {
+          id: aiCellId,
+          streamId: stream.id,
+          content: '',
+          type: 'aiResponse',
+          order: currentCell.order + 1,
+        },
+      });
+    }
 
     // Start streaming
     setStreamingCells(prev => new Map(prev).set(aiCellId, { id: aiCellId, content: '' }));
+
+    // Clear any previous error
+    setErrorCells(prev => {
+      const updated = new Map(prev);
+      updated.delete(aiCellId);
+      return updated;
+    });
 
     // Send think request with full context
     // Include sourceCellId so Swift can generate a restatement for the user's question
