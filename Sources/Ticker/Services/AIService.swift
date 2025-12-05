@@ -20,44 +20,6 @@ final class AIService {
         return !key.isEmpty
     }
 
-    // MARK: - System Prompts
-
-    private let thinkingPartnerPrompt = """
-    You are providing content for a reference document. Your responses will be stored as notes.
-
-    Style:
-    - Terse, information-dense, no filler
-    - Lead with facts, data, and substance
-    - Use bullet points and structure when helpful
-    - No pleasantries, hedging, or conversational padding
-    - Never say "As of my last knowledge", "I think", "It's worth noting", etc.
-    - If uncertain, state the uncertainty briefly and move on
-    - When source documents are provided, ground responses in that material
-
-    Format responses as clean reference content, not chat replies.
-    """
-
-    private let restatementPrompt = """
-    Convert the user's input into a brief heading or title form, suitable for a reference document.
-
-    Rules:
-    - Transform questions into declarative topic headings (e.g., "What is the GDP of Chile?" → "GDP of Chile")
-    - Keep the original words and sentiment as much as possible
-    - Remove question words (what, how, why, etc.) and rephrase minimally
-    - If the input is already a statement, topic, or command that works as a heading, return it unchanged or with minimal cleanup
-    - If no restatement is needed (already a good heading), return exactly: NONE
-    - Return ONLY the heading text, nothing else—no quotes, no explanation
-    - Keep it concise: ideally under 8 words
-
-    Examples:
-    - "What's the GDP of Chile?" → "GDP of Chile"
-    - "How does photosynthesis work?" → "How photosynthesis works"
-    - "Tell me about the French Revolution" → "The French Revolution"
-    - "Summarize the key points" → "Key points summary"
-    - "React hooks" → "NONE"
-    - "The problem with current approach" → "NONE"
-    """
-
     // MARK: - Restatement
 
     /// Generate a heading/title form of the user's input (non-streaming)
@@ -71,7 +33,7 @@ final class AIService {
         }
 
         let messages: [[String: String]] = [
-            ["role": "system", "content": restatementPrompt],
+            ["role": "system", "content": Prompts.restatement],
             ["role": "user", "content": input]
         ]
 
@@ -129,7 +91,7 @@ final class AIService {
 
         // Build messages
         var messages: [[String: String]] = [
-            ["role": "system", "content": thinkingPartnerPrompt]
+            ["role": "system", "content": Prompts.thinkingPartner]
         ]
 
         // Add source context if available

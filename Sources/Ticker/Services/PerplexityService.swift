@@ -20,17 +20,6 @@ final class PerplexityService {
         return !key.isEmpty
     }
 
-    /// System prompt for search queries
-    private let searchSystemPrompt = """
-    You are providing factual, current information for a research document.
-
-    Style:
-    - Lead with the most relevant facts
-    - Include specific data, dates, and numbers when available
-    - Cite sources naturally within the text
-    - Be concise but comprehensive
-    - No pleasantries or hedging
-    """
 
     /// Search with streaming response using async/await
     func search(
@@ -45,7 +34,7 @@ final class PerplexityService {
         }
 
         let messages: [[String: String]] = [
-            ["role": "system", "content": searchSystemPrompt],
+            ["role": "system", "content": Prompts.search],
             ["role": "user", "content": query]
         ]
 

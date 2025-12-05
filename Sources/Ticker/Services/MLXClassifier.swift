@@ -13,19 +13,6 @@ final class MLXClassifier: QueryClassifier {
         container != nil
     }
 
-    /// Classification prompt - designed to be answered in a single word
-    private let systemPrompt = """
-    Classify queries. Reply with ONE word only.
-
-    SEARCH = needs real-time/current info: news, weather, prices, events, "what happened", "today", "this morning", "latest", "recent", "current"
-    KNOWLEDGE = facts, explanations, how things work, definitions
-    EXPAND = elaborate, add detail
-    SUMMARIZE = condense, shorten
-    REWRITE = rephrase, reword
-    EXTRACT = pull out key points
-
-    Answer: search, knowledge, expand, summarize, rewrite, or extract
-    """
 
     func prepare() async throws {
         guard container == nil, !isLoading else { return }
@@ -52,7 +39,7 @@ final class MLXClassifier: QueryClassifier {
 
         let session = ChatSession(
             container,
-            instructions: systemPrompt,
+            instructions: Prompts.classifier,
             generateParameters: GenerateParameters(
                 maxTokens: 10,
                 temperature: 0.1  // Low temperature for deterministic classification
