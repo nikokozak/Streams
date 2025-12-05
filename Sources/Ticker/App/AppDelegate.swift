@@ -2,19 +2,22 @@ import AppKit
 import WebKit
 
 @main
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var webViewManager: WebViewManager?
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        setupMainWindow()
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            setupMainWindow()
+        }
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
+    nonisolated func applicationWillTerminate(_ notification: Notification) {
         // Cleanup
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
