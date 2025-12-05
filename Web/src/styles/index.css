@@ -436,6 +436,32 @@ body {
   color: var(--color-accent);
 }
 
+/* Inline restatement (shown while editing) */
+.cell-restatement-inline {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  padding: var(--spacing-xs) 0;
+  margin-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Animated entrance for restatements */
+.cell-restatement--animated {
+  animation: restatement-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes restatement-enter {
+  0% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* ==================== Cell Editor ==================== */
 
 .cell-editor {
@@ -961,6 +987,30 @@ body {
   font-size: var(--font-size-sm);
   color: var(--color-text-tertiary);
   margin: 0;
+}
+
+.settings-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.settings-toggle-label input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--color-accent);
+}
+
+.settings-toggle-label input[type="checkbox"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-toggle-label input[type="checkbox"]:disabled + span {
+  opacity: 0.5;
 }
 
 .settings-shortcuts {

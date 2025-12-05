@@ -6,6 +6,8 @@
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+BUILD_DIR="$ROOT_DIR/.build/xcode"
+BINARY="$BUILD_DIR/Build/Products/Debug/Ticker"
 
 # Kill any existing processes on port 5173
 echo "Cleaning up port 5173..."
@@ -22,7 +24,11 @@ trap "kill $VITE_PID 2>/dev/null || true" EXIT
 # Wait for Vite to be ready
 sleep 2
 
-# Build and run Swift app
-echo "Building and running Ticker..."
+# Build with xcodebuild (required for MLX Metal shaders)
+echo "Building Ticker with xcodebuild..."
 cd "$ROOT_DIR"
-swift run
+xcodebuild build -scheme Ticker -destination 'platform=OS X' -derivedDataPath "$BUILD_DIR" -quiet
+
+# Run the built binary
+echo "Running Ticker..."
+"$BINARY"

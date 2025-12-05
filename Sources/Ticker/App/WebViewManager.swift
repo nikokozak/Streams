@@ -9,6 +9,9 @@ final class WebViewManager: NSObject {
     private let persistence: PersistenceService?
     private let sourceService: SourceService?
     private let aiService: AIService
+    private let perplexityService: PerplexityService
+    private let dispatcherService: DispatcherService
+    private var mlxClassifier: MLXClassifier?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -21,6 +24,13 @@ final class WebViewManager: NSObject {
 
         // Initialize services
         self.aiService = AIService()
+        self.perplexityService = PerplexityService()
+        self.dispatcherService = DispatcherService(
+            classifier: nil,  // Will be set after MLX loads
+            aiService: AIService(),
+            perplexityService: PerplexityService()
+        )
+
         do {
             let p = try PersistenceService()
             self.persistence = p
@@ -43,6 +53,23 @@ final class WebViewManager: NSObject {
 
     func load() {
         loadWebContent()
+        loadMLXClassifier()
+    }
+
+    /// Load the MLX classifier in the background
+    private func loadMLXClassifier() {
+        Task {
+            do {
+                let classifier = MLXClassifier()
+                try await classifier.prepare()
+                self.mlxClassifier = classifier
+                dispatcherService.setClassifier(classifier)
+                print("MLX classifier loaded and ready")
+            } catch {
+                print("Failed to load MLX classifier: \(error)")
+                // App continues to work, just uses direct GPT calls
+            }
+        }
     }
 
     private func loadWebContent() {
@@ -306,30 +333,49 @@ final class WebViewManager: NSObject {
                 }
             }
 
-            // Think with streaming
-            aiService.think(
-                currentCell: currentCell,
-                priorCells: priorCells,
-                sourceContext: sourceContext,
-                onChunk: { [weak self] chunk in
-                    self?.bridgeService.send(BridgeMessage(
-                        type: "aiChunk",
-                        payload: ["cellId": AnyCodable(cellId), "chunk": AnyCodable(chunk)]
-                    ))
-                },
-                onComplete: { [weak self] in
-                    self?.bridgeService.send(BridgeMessage(
-                        type: "aiComplete",
-                        payload: ["cellId": AnyCodable(cellId)]
-                    ))
-                },
-                onError: { [weak self] error in
-                    self?.bridgeService.send(BridgeMessage(
-                        type: "aiError",
-                        payload: ["cellId": AnyCodable(cellId), "error": AnyCodable(error.localizedDescription)]
-                    ))
+            // Define callbacks for streaming
+            let onChunk: (String) -> Void = { [weak self] chunk in
+                self?.bridgeService.send(BridgeMessage(
+                    type: "aiChunk",
+                    payload: ["cellId": AnyCodable(cellId), "chunk": AnyCodable(chunk)]
+                ))
+            }
+            let onComplete: () -> Void = { [weak self] in
+                self?.bridgeService.send(BridgeMessage(
+                    type: "aiComplete",
+                    payload: ["cellId": AnyCodable(cellId)]
+                ))
+            }
+            let onError: (Error) -> Void = { [weak self] error in
+                self?.bridgeService.send(BridgeMessage(
+                    type: "aiError",
+                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable(error.localizedDescription)]
+                ))
+            }
+
+            // Use dispatcher if smart routing is enabled, otherwise direct to AI
+            if SettingsService.shared.smartRoutingEnabled && SettingsService.shared.isPerplexityConfigured {
+                Task {
+                    await dispatcherService.dispatch(
+                        query: currentCell,
+                        priorCells: priorCells,
+                        sourceContext: sourceContext,
+                        onChunk: onChunk,
+                        onComplete: onComplete,
+                        onError: onError
+                    )
                 }
-            )
+            } else {
+                // Direct to OpenAI
+                aiService.think(
+                    currentCell: currentCell,
+                    priorCells: priorCells,
+                    sourceContext: sourceContext,
+                    onChunk: onChunk,
+                    onComplete: onComplete,
+                    onError: onError
+                )
+            }
 
         case "exportMarkdown":
             // TODO: Export stream
@@ -351,6 +397,16 @@ final class WebViewManager: NSObject {
             // Save OpenAI API key if provided
             if let openaiKey = payload["openaiAPIKey"]?.value as? String {
                 SettingsService.shared.openaiAPIKey = openaiKey.isEmpty ? nil : openaiKey
+            }
+
+            // Save Perplexity API key if provided
+            if let perplexityKey = payload["perplexityAPIKey"]?.value as? String {
+                SettingsService.shared.perplexityAPIKey = perplexityKey.isEmpty ? nil : perplexityKey
+            }
+
+            // Save smart routing setting if provided
+            if let smartRouting = payload["smartRoutingEnabled"]?.value as? Bool {
+                SettingsService.shared.smartRoutingEnabled = smartRouting
             }
 
             // Send back updated settings

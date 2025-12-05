@@ -39,6 +39,18 @@ export function Cell({
   // Does this cell have a restatement (dual-representation)?
   const hasRestatement = Boolean(cell.restatement) && cell.type === 'text';
 
+  // Track when restatement first appears for animation
+  const [showRestatementAnim, setShowRestatementAnim] = useState(false);
+  const prevRestatementRef = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    // If restatement just appeared, trigger animation
+    if (cell.restatement && !prevRestatementRef.current) {
+      setShowRestatementAnim(true);
+    }
+    prevRestatementRef.current = cell.restatement;
+  }, [cell.restatement]);
+
   // Debounced save
   const handleChange = (content: string) => {
     setLocalContent(content);
@@ -147,7 +159,7 @@ export function Cell({
       ) : showRestatementView ? (
         // Display mode: show restatement as a heading
         <div
-          className="cell-restatement"
+          className={`cell-restatement ${showRestatementAnim ? 'cell-restatement--animated' : ''}`}
           onClick={() => {
             setIsFocused(true);
             setTimeout(() => {
@@ -158,18 +170,25 @@ export function Cell({
           {cell.restatement}
         </div>
       ) : (
-        // Edit mode: show original content
-        <CellEditor
-          content={localContent}
-          autoFocus={isNew || (hasRestatement && isFocused)}
-          placeholder={cell.type === 'aiResponse' ? '' : 'Write your thoughts...'}
-          onChange={handleChange}
-          onEnter={onEnter}
-          onThink={() => { saveNow(); onThink(); }}
-          onBackspaceEmpty={handleBackspaceEmpty}
-          onArrowUp={() => { saveNow(); onFocusPrevious(); }}
-          onArrowDown={() => { saveNow(); onFocusNext(); }}
-        />
+        // Edit mode: show original content with animated restatement header if applicable
+        <>
+          {hasRestatement && showRestatementAnim && (
+            <div className="cell-restatement-inline cell-restatement--animated">
+              {cell.restatement}
+            </div>
+          )}
+          <CellEditor
+            content={localContent}
+            autoFocus={isNew || (hasRestatement && isFocused)}
+            placeholder={cell.type === 'aiResponse' ? '' : 'Write your thoughts...'}
+            onChange={handleChange}
+            onEnter={onEnter}
+            onThink={() => { saveNow(); onThink(); }}
+            onBackspaceEmpty={handleBackspaceEmpty}
+            onArrowUp={() => { saveNow(); onFocusPrevious(); }}
+            onArrowDown={() => { saveNow(); onFocusNext(); }}
+          />
+        </>
       )}
     </div>
   );

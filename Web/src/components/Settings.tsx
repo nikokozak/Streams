@@ -4,6 +4,9 @@ import { bridge } from '../types';
 interface SettingsData {
   hasOpenAIKey: boolean;
   openaiKeyPreview?: string;
+  hasPerplexityKey: boolean;
+  perplexityKeyPreview?: string;
+  smartRoutingEnabled: boolean;
 }
 
 interface SettingsProps {
@@ -13,8 +16,11 @@ interface SettingsProps {
 export function Settings({ onClose }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [openaiKey, setOpenaiKey] = useState('');
+  const [perplexityKey, setPerplexityKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [showPerplexityKey, setShowPerplexityKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [perplexitySaved, setPerplexitySaved] = useState(false);
 
   // Load settings on mount
   useEffect(() => {
@@ -29,7 +35,7 @@ export function Settings({ onClose }: SettingsProps) {
     return unsubscribe;
   }, []);
 
-  const handleSave = () => {
+  const handleSaveOpenAI = () => {
     bridge.send({
       type: 'saveSettings',
       payload: { openaiAPIKey: openaiKey },
@@ -39,12 +45,19 @@ export function Settings({ onClose }: SettingsProps) {
     setOpenaiKey(''); // Clear input after save
   };
 
+  const handleSavePerplexity = () => {
+    bridge.send({
+      type: 'saveSettings',
+      payload: { perplexityAPIKey: perplexityKey },
+    });
+    setPerplexitySaved(true);
+    setTimeout(() => setPerplexitySaved(false), 2000);
+    setPerplexityKey(''); // Clear input after save
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       onClose();
-    }
-    if (e.key === 'Enter' && openaiKey) {
-      handleSave();
     }
   };
 
@@ -81,7 +94,7 @@ export function Settings({ onClose }: SettingsProps) {
               </button>
               <button
                 className="settings-save-key"
-                onClick={handleSave}
+                onClick={handleSaveOpenAI}
                 disabled={!openaiKey}
               >
                 {saved ? 'Saved!' : 'Save'}
@@ -93,14 +106,72 @@ export function Settings({ onClose }: SettingsProps) {
                 : 'Required for AI features. Get one at platform.openai.com'}
             </p>
           </div>
+
+          <div className="settings-field">
+            <label htmlFor="perplexity-key">Perplexity API Key (Optional)</label>
+            <div className="settings-key-input">
+              <input
+                id="perplexity-key"
+                type={showPerplexityKey ? 'text' : 'password'}
+                value={perplexityKey}
+                onChange={(e) => setPerplexityKey(e.target.value)}
+                placeholder={settings?.perplexityKeyPreview || 'pplx-...'}
+                autoComplete="off"
+              />
+              <button
+                className="settings-toggle-visibility"
+                onClick={() => setShowPerplexityKey(!showPerplexityKey)}
+                type="button"
+              >
+                {showPerplexityKey ? 'Hide' : 'Show'}
+              </button>
+              <button
+                className="settings-save-key"
+                onClick={handleSavePerplexity}
+                disabled={!perplexityKey}
+              >
+                {perplexitySaved ? 'Saved!' : 'Save'}
+              </button>
+            </div>
+            <p className="settings-hint">
+              {settings?.hasPerplexityKey
+                ? 'Key is configured. Enables real-time search for current events.'
+                : 'Enables real-time search. Get one at perplexity.ai'}
+            </p>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h2>AI Routing</h2>
+          <div className="settings-field">
+            <label className="settings-toggle-label">
+              <input
+                type="checkbox"
+                checked={settings?.smartRoutingEnabled ?? false}
+                onChange={(e) => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { smartRoutingEnabled: e.target.checked },
+                  });
+                }}
+                disabled={!settings?.hasPerplexityKey}
+              />
+              <span>Smart Routing</span>
+            </label>
+            <p className="settings-hint">
+              {settings?.hasPerplexityKey
+                ? 'When enabled, a local AI model analyzes your query to route it optimally: current events and real-time data go to Perplexity search, while knowledge questions go to GPT.'
+                : 'Requires Perplexity API key. When enabled, queries are automatically routed to the best AI backend.'}
+            </p>
+          </div>
         </section>
 
         <section className="settings-section">
           <h2>Keyboard Shortcuts</h2>
           <div className="settings-shortcuts">
             <div className="shortcut-row">
-              <span className="shortcut-keys">/command</span>
-              <span className="shortcut-desc">AI actions (summarize, expand, etc.)</span>
+              <span className="shortcut-keys">Cmd+Enter</span>
+              <span className="shortcut-desc">Think with AI</span>
             </div>
             <div className="shortcut-row">
               <span className="shortcut-keys">Enter</span>
