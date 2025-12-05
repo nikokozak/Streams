@@ -8,6 +8,7 @@ final class WebViewManager: NSObject {
     private let bridgeService: BridgeService
     private let persistence: PersistenceService?
     private let sourceService: SourceService?
+    private let aiService: AIService
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -18,7 +19,8 @@ final class WebViewManager: NSObject {
 
         self.webView = WKWebView(frame: .zero, configuration: config)
 
-        // Initialize persistence and source service
+        // Initialize services
+        self.aiService = AIService()
         do {
             let p = try PersistenceService()
             self.persistence = p
@@ -225,8 +227,61 @@ final class WebViewManager: NSObject {
             }
 
         case "executeAction":
-            // TODO: Execute AI action
-            break
+            guard let payload = message.payload,
+                  let actionName = payload["action"]?.value as? String,
+                  let action = AIService.Action(rawValue: actionName),
+                  let cellId = payload["cellId"]?.value as? String,
+                  let userContent = payload["content"]?.value as? String else {
+                print("Invalid executeAction payload")
+                return
+            }
+
+            // Get source context if stream has sources
+            var sourceContext: String? = nil
+            if let streamIdValue = payload["streamId"]?.value as? String,
+               let streamId = UUID(uuidString: streamIdValue),
+               let stream = try? persistence.loadStream(id: streamId) {
+                let combinedText = stream.sources
+                    .compactMap { $0.extractedText }
+                    .joined(separator: "\n\n---\n\n")
+                if !combinedText.isEmpty {
+                    sourceContext = combinedText
+                }
+            }
+
+            // Check if configured
+            guard aiService.isConfigured else {
+                bridgeService.send(BridgeMessage(
+                    type: "aiError",
+                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured")]
+                ))
+                return
+            }
+
+            // Execute with streaming
+            aiService.executeStreaming(
+                action: action,
+                userContent: userContent,
+                sourceContext: sourceContext,
+                onChunk: { [weak self] chunk in
+                    self?.bridgeService.send(BridgeMessage(
+                        type: "aiChunk",
+                        payload: ["cellId": AnyCodable(cellId), "chunk": AnyCodable(chunk)]
+                    ))
+                },
+                onComplete: { [weak self] in
+                    self?.bridgeService.send(BridgeMessage(
+                        type: "aiComplete",
+                        payload: ["cellId": AnyCodable(cellId)]
+                    ))
+                },
+                onError: { [weak self] error in
+                    self?.bridgeService.send(BridgeMessage(
+                        type: "aiError",
+                        payload: ["cellId": AnyCodable(cellId), "error": AnyCodable(error.localizedDescription)]
+                    ))
+                }
+            )
 
         case "exportMarkdown":
             // TODO: Export stream

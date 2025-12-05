@@ -5,6 +5,8 @@ import { CellEditor } from './CellEditor';
 interface CellProps {
   cell: CellType;
   isNew?: boolean;
+  isStreaming?: boolean;
+  error?: string;
   onUpdate: (content: string) => void;
   onDelete: () => void;
   onEnter: () => void;
@@ -16,6 +18,8 @@ interface CellProps {
 export function Cell({
   cell,
   isNew = false,
+  isStreaming = false,
+  error,
   onUpdate,
   onDelete,
   onEnter,
@@ -74,28 +78,42 @@ export function Cell({
     };
   }, []);
 
+  // Sync local content with cell prop (for streaming updates)
+  useEffect(() => {
+    if (isStreaming) {
+      setLocalContent(cell.content);
+    }
+  }, [cell.content, isStreaming]);
+
   const cellTypeClass = cell.type === 'aiResponse'
     ? 'cell--ai'
     : cell.type === 'quote'
       ? 'cell--quote'
       : '';
 
+  const streamingClass = isStreaming ? 'cell--streaming' : '';
+  const errorClass = error ? 'cell--error' : '';
+
   return (
     <div
       ref={containerRef}
-      className={`cell ${cellTypeClass}`}
+      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass}`}
       onBlur={saveNow}
     >
-      <CellEditor
-        content={localContent}
-        autoFocus={isNew}
-        placeholder="Type something..."
-        onChange={handleChange}
-        onEnter={onEnter}
-        onBackspaceEmpty={handleBackspaceEmpty}
-        onArrowUp={() => { saveNow(); onFocusPrevious(); }}
-        onArrowDown={() => { saveNow(); onFocusNext(); }}
-      />
+      {error ? (
+        <div className="cell-error-message">{error}</div>
+      ) : (
+        <CellEditor
+          content={localContent}
+          autoFocus={isNew}
+          placeholder={cell.type === 'aiResponse' ? '' : 'Type something... (/ for commands)'}
+          onChange={handleChange}
+          onEnter={onEnter}
+          onBackspaceEmpty={handleBackspaceEmpty}
+          onArrowUp={() => { saveNow(); onFocusPrevious(); }}
+          onArrowDown={() => { saveNow(); onFocusNext(); }}
+        />
+      )}
     </div>
   );
 }

@@ -497,3 +497,90 @@ body {
 .source-status--error::after {
   background: var(--color-error);
 }
+
+/* ==================== Action Menu ==================== */
+
+.action-menu {
+  position: fixed;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border-medium);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  min-width: 200px;
+  max-width: 280px;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.action-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  transition: background-color 0.1s ease;
+}
+
+.action-menu-item:hover,
+.action-menu-item.selected {
+  background: var(--color-surface-hover);
+}
+
+.action-menu-item.selected {
+  background: var(--color-accent);
+  color: white;
+}
+
+.action-menu-item.selected .action-description {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.action-name {
+  font-weight: 500;
+  font-size: var(--font-size-md);
+}
+
+.action-description {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ==================== AI Response Styling ==================== */
+
+.cell--streaming {
+  border-left: 3px solid var(--color-accent);
+  background: var(--color-ai-bg);
+}
+
+.cell--streaming::after {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--color-accent);
+  animation: blink 1s step-end infinite;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+.cell--error {
+  border-left: 3px solid var(--color-error);
+  background: rgba(239, 68, 68, 0.04);
+}
+
+.cell-error-message {
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-sm) 0;
+}

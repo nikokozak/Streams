@@ -43,6 +43,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.title = "Ticker"
         mainWindow?.center()
         mainWindow?.minSize = NSSize(width: 600, height: 400)
+        mainWindow?.appearance = NSAppearance(named: .aqua)  // Force light mode
 
         webViewManager = WebViewManager()
         mainWindow?.contentView = webViewManager?.webView
