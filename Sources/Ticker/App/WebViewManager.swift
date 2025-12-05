@@ -16,6 +16,7 @@ final class WebViewManager: NSObject {
         self.webView = WKWebView(frame: .zero, configuration: config)
         super.init()
 
+        webView.navigationDelegate = self
         bridgeService.webView = webView
         bridgeService.onMessage = { [weak self] message in
             self?.handleMessage(message)
@@ -81,5 +82,23 @@ final class WebViewManager: NSObject {
         default:
             print("Unknown message type: \(message.type)")
         }
+    }
+}
+
+extension WebViewManager: WKNavigationDelegate {
+    nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        print("WebView: Started loading")
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        print("WebView: Finished loading")
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        print("WebView: Failed with error: \(error.localizedDescription)")
+    }
+
+    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        print("WebView: Failed provisional navigation: \(error.localizedDescription)")
     }
 }
