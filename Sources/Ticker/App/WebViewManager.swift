@@ -1,10 +1,13 @@
 import WebKit
+import AppKit
+import UniformTypeIdentifiers
 
 /// Manages the WKWebView and Swift ↔ JS bridge
 final class WebViewManager: NSObject {
     let webView: WKWebView
     private let bridgeService: BridgeService
     private let persistence: PersistenceService?
+    private let sourceService: SourceService?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -15,12 +18,15 @@ final class WebViewManager: NSObject {
 
         self.webView = WKWebView(frame: .zero, configuration: config)
 
-        // Initialize persistence
+        // Initialize persistence and source service
         do {
-            self.persistence = try PersistenceService()
+            let p = try PersistenceService()
+            self.persistence = p
+            self.sourceService = SourceService(persistence: p)
         } catch {
             print("Failed to initialize persistence: \(error)")
             self.persistence = nil
+            self.sourceService = nil
         }
 
         super.init()
@@ -174,8 +180,49 @@ final class WebViewManager: NSObject {
             }
 
         case "addSource":
-            // TODO: Open file picker, add source
-            break
+            guard let payload = message.payload,
+                  let streamIdValue = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdValue),
+                  let sourceService else {
+                print("Invalid addSource payload or service unavailable")
+                return
+            }
+
+            // Must run on main thread for NSOpenPanel
+            await MainActor.run {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = true
+                panel.canChooseDirectories = false
+                panel.allowsMultipleSelection = false
+                panel.allowedContentTypes = [.pdf, .plainText, .text]
+                panel.message = "Select a file to attach"
+
+                if panel.runModal() == .OK, let url = panel.url {
+                    do {
+                        let source = try sourceService.addSource(from: url, to: streamId)
+                        let sourcePayload = encodeSource(source)
+                        bridgeService.send(BridgeMessage(type: "sourceAdded", payload: ["source": AnyCodable(sourcePayload)]))
+                    } catch {
+                        print("Failed to add source: \(error)")
+                        bridgeService.send(BridgeMessage(type: "sourceError", payload: ["error": AnyCodable(error.localizedDescription)]))
+                    }
+                }
+            }
+
+        case "removeSource":
+            guard let payload = message.payload,
+                  let idValue = payload["id"]?.value as? String,
+                  let id = UUID(uuidString: idValue),
+                  let sourceService else {
+                print("Invalid removeSource payload")
+                return
+            }
+            do {
+                try sourceService.removeSource(id: id)
+                bridgeService.send(BridgeMessage(type: "sourceRemoved", payload: ["id": AnyCodable(id.uuidString)]))
+            } catch {
+                print("Failed to remove source: \(error)")
+            }
 
         case "executeAction":
             // TODO: Execute AI action
@@ -225,6 +272,25 @@ final class WebViewManager: NSObject {
             "createdAt": formatter.string(from: stream.createdAt),
             "updatedAt": formatter.string(from: stream.updatedAt)
         ]
+    }
+
+    private func encodeSource(_ source: SourceReference) -> [String: Any] {
+        let formatter = ISO8601DateFormatter()
+        var dict: [String: Any] = [
+            "id": source.id.uuidString,
+            "streamId": source.streamId.uuidString,
+            "displayName": source.displayName,
+            "fileType": source.fileType.rawValue,
+            "status": source.status.rawValue,
+            "addedAt": formatter.string(from: source.addedAt)
+        ]
+        if let pageCount = source.pageCount {
+            dict["pageCount"] = pageCount
+        }
+        if source.extractedText != nil {
+            dict["hasExtractedText"] = true
+        }
+        return dict
     }
 
     private func decodeCell(from payload: [String: AnyCodable]) throws -> Cell {

@@ -1,6 +1,7 @@
-import { useState, useRef, useCallback } from 'react';
-import { Stream, Cell as CellType, bridge } from '../types';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { Stream, Cell as CellType, SourceReference, bridge } from '../types';
 import { Cell } from './Cell';
+import { SourcePanel } from './SourcePanel';
 
 interface StreamEditorProps {
   stream: Stream;
@@ -9,8 +10,33 @@ interface StreamEditorProps {
 
 export function StreamEditor({ stream, onBack }: StreamEditorProps) {
   const [cells, setCells] = useState<CellType[]>(stream.cells);
+  const [sources, setSources] = useState<SourceReference[]>(stream.sources);
   const [newCellId, setNewCellId] = useState<string | null>(null);
   const cellFocusRefs = useRef<Map<string, () => void>>(new Map());
+
+  // Listen for source updates
+  useEffect(() => {
+    const unsubscribe = bridge.onMessage((message) => {
+      if (message.type === 'sourceAdded' && message.payload?.source) {
+        const source = message.payload.source as SourceReference;
+        if (source.streamId === stream.id) {
+          setSources(prev => [...prev, source]);
+        }
+      }
+      if (message.type === 'sourceRemoved' && message.payload?.id) {
+        setSources(prev => prev.filter(s => s.id !== message.payload?.id));
+      }
+    });
+    return unsubscribe;
+  }, [stream.id]);
+
+  const handleSourceAdded = useCallback((source: SourceReference) => {
+    setSources(prev => [...prev, source]);
+  }, []);
+
+  const handleSourceRemoved = useCallback((sourceId: string) => {
+    setSources(prev => prev.filter(s => s.id !== sourceId));
+  }, []);
 
   const handleCellUpdate = useCallback((cellId: string, content: string) => {
     setCells(prev => {
@@ -147,20 +173,29 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
         <h1>{stream.title}</h1>
       </header>
 
-      <div className="stream-content">
-        {cells.map((cell, index) => (
-          <Cell
-            key={cell.id}
-            cell={cell}
-            isNew={cell.id === newCellId}
-            onUpdate={(content) => handleCellUpdate(cell.id, content)}
-            onDelete={() => handleCellDelete(cell.id)}
-            onEnter={() => handleCreateCell(index)}
-            onFocusPrevious={() => handleFocusPrevious(index)}
-            onFocusNext={() => handleFocusNext(index)}
-            registerFocus={(focus) => registerCellFocus(cell.id, focus)}
-          />
-        ))}
+      <div className="stream-body">
+        <div className="stream-content">
+          {cells.map((cell, index) => (
+            <Cell
+              key={cell.id}
+              cell={cell}
+              isNew={cell.id === newCellId}
+              onUpdate={(content) => handleCellUpdate(cell.id, content)}
+              onDelete={() => handleCellDelete(cell.id)}
+              onEnter={() => handleCreateCell(index)}
+              onFocusPrevious={() => handleFocusPrevious(index)}
+              onFocusNext={() => handleFocusNext(index)}
+              registerFocus={(focus) => registerCellFocus(cell.id, focus)}
+            />
+          ))}
+        </div>
+
+        <SourcePanel
+          streamId={stream.id}
+          sources={sources}
+          onSourceAdded={handleSourceAdded}
+          onSourceRemoved={handleSourceRemoved}
+        />
       </div>
     </div>
   );
