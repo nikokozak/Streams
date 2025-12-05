@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
+import { StreamEditor } from './components/StreamEditor';
 
 type View = 'list' | 'stream';
 
@@ -11,14 +12,11 @@ export function App() {
   useEffect(() => {
     // Subscribe to bridge messages
     const unsubscribe = bridge.onMessage((message) => {
-      console.log('Bridge message received:', message.type, message.payload);
       switch (message.type) {
         case 'streamsLoaded':
-          console.log('Setting streams:', message.payload?.streams);
           setStreams((message.payload?.streams as StreamSummary[]) || []);
           break;
         case 'streamLoaded':
-          console.log('Setting current stream:', message.payload?.stream);
           setCurrentStream(message.payload?.stream as Stream);
           setView('stream');
           break;
@@ -27,7 +25,6 @@ export function App() {
 
     // Request initial data after a short delay to ensure bridge is ready
     setTimeout(() => {
-      console.log('Requesting loadStreams');
       bridge.send({ type: 'loadStreams' });
     }, 100);
 
@@ -50,7 +47,7 @@ export function App() {
 
   if (view === 'stream' && currentStream) {
     return (
-      <StreamView
+      <StreamEditor
         stream={currentStream}
         onBack={handleBackToList}
       />
@@ -96,29 +93,6 @@ function StreamListView({ streams, onSelect, onCreate }: StreamListViewProps) {
             </button>
           ))
         )}
-      </div>
-    </div>
-  );
-}
-
-interface StreamViewProps {
-  stream: Stream;
-  onBack: () => void;
-}
-
-function StreamView({ stream, onBack }: StreamViewProps) {
-  return (
-    <div className="stream-view">
-      <header className="stream-header">
-        <button onClick={onBack}>← Back</button>
-        <h1>{stream.title}</h1>
-      </header>
-      <div className="stream-content">
-        {stream.cells.map((cell) => (
-          <div key={cell.id} className="cell">
-            {cell.content}
-          </div>
-        ))}
       </div>
     </div>
   );
