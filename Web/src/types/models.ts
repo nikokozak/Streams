@@ -23,6 +23,8 @@ export interface Cell {
   id: string;
   streamId: string;
   content: string;
+  /** Display title/heading form of content (for text cells that were sent to AI) */
+  restatement?: string;
   type: CellType;
   sourceBinding: SourceBinding | null;
   order: number;

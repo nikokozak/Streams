@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { SourceReference, bridge } from '../types';
 
 interface SourcePanelProps {
@@ -12,6 +13,8 @@ export function SourcePanel({
   sources,
   onSourceRemoved,
 }: SourcePanelProps) {
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   const handleAddSource = () => {
     bridge.send({ type: 'addSource', payload: { streamId } });
   };
@@ -22,27 +25,40 @@ export function SourcePanel({
   };
 
   return (
-    <div className="source-panel">
+    <div className={`source-panel ${isCollapsed ? 'source-panel--collapsed' : ''}`}>
       <div className="source-panel-header">
-        <h3>Sources</h3>
-        <button onClick={handleAddSource} className="add-source-button">
-          + Add
+        <button
+          className="source-panel-toggle"
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          title={isCollapsed ? 'Expand sources' : 'Collapse sources'}
+        >
+          {isCollapsed ? '◀' : '▶'}
         </button>
-      </div>
-
-      <div className="source-list">
-        {sources.length === 0 ? (
-          <p className="source-empty">No sources attached</p>
-        ) : (
-          sources.map((source) => (
-            <SourceItem
-              key={source.id}
-              source={source}
-              onRemove={() => handleRemoveSource(source.id)}
-            />
-          ))
+        {!isCollapsed && (
+          <>
+            <h3>Sources</h3>
+            <button onClick={handleAddSource} className="add-source-button">
+              + Add
+            </button>
+          </>
         )}
       </div>
+
+      {!isCollapsed && (
+        <div className="source-list">
+          {sources.length === 0 ? (
+            <p className="source-empty">No sources attached</p>
+          ) : (
+            sources.map((source) => (
+              <SourceItem
+                key={source.id}
+                source={source}
+                onRemove={() => handleRemoveSource(source.id)}
+              />
+            ))
+          )}
+        </div>
+      )}
     </div>
   );
 }

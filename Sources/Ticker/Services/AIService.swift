@@ -12,7 +12,6 @@ final class AIService {
 
     /// Get API key from settings or environment
     private var apiKey: String? {
-        // Settings takes priority, then environment variable
         settings.openaiAPIKey ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
     }
 
@@ -21,47 +20,107 @@ final class AIService {
         return !key.isEmpty
     }
 
-    // MARK: - Actions
+    // MARK: - System Prompts
 
-    enum Action: String, CaseIterable {
-        case summarize = "summarize"
-        case expand = "expand"
-        case rewrite = "rewrite"
-        case ask = "ask"
-        case extract = "extract"
+    private let thinkingPartnerPrompt = """
+    You are a thoughtful thinking partner helping someone work through ideas and documents.
 
-        var displayName: String {
-            switch self {
-            case .summarize: return "Summarize"
-            case .expand: return "Expand"
-            case .rewrite: return "Rewrite"
-            case .ask: return "Ask"
-            case .extract: return "Extract key points"
-            }
+    Your role:
+    - Engage with their thinking, not just answer questions
+    - Build on what they've written, connecting ideas
+    - When they have source documents, ground your responses in that material
+    - Be concise but substantive—this is a working session, not an essay
+    - If they ask a question, answer it directly first, then expand if helpful
+    - If they share a thought, engage with it—agree, push back, extend, or question
+
+    You have access to:
+    1. Their current thought (what they just wrote)
+    2. Prior cells in this session (their thinking so far)
+    3. Source documents they've attached (if any)
+
+    Respond naturally, as a knowledgeable colleague would.
+    """
+
+    private let restatementPrompt = """
+    Convert the user's input into a brief heading or title form, suitable for a reference document.
+
+    Rules:
+    - Transform questions into declarative topic headings (e.g., "What is the GDP of Chile?" → "GDP of Chile")
+    - Keep the original words and sentiment as much as possible
+    - Remove question words (what, how, why, etc.) and rephrase minimally
+    - If the input is already a statement, topic, or command that works as a heading, return it unchanged or with minimal cleanup
+    - If no restatement is needed (already a good heading), return exactly: NONE
+    - Return ONLY the heading text, nothing else—no quotes, no explanation
+    - Keep it concise: ideally under 8 words
+
+    Examples:
+    - "What's the GDP of Chile?" → "GDP of Chile"
+    - "How does photosynthesis work?" → "How photosynthesis works"
+    - "Tell me about the French Revolution" → "The French Revolution"
+    - "Summarize the key points" → "Key points summary"
+    - "React hooks" → "NONE"
+    - "The problem with current approach" → "NONE"
+    """
+
+    // MARK: - Restatement
+
+    /// Generate a heading/title form of the user's input (non-streaming)
+    func generateRestatement(
+        for input: String,
+        completion: @escaping (String?) -> Void
+    ) {
+        guard let apiKey else {
+            completion(nil)
+            return
         }
 
-        var systemPrompt: String {
-            switch self {
-            case .summarize:
-                return "You are a helpful assistant. Summarize the provided content concisely while preserving key information."
-            case .expand:
-                return "You are a helpful assistant. Expand on the provided content with more detail, examples, or explanation."
-            case .rewrite:
-                return "You are a helpful assistant. Rewrite the provided content to be clearer and more polished while preserving the meaning."
-            case .ask:
-                return "You are a helpful assistant. Answer questions based on the provided context."
-            case .extract:
-                return "You are a helpful assistant. Extract and list the key points, facts, or insights from the provided content."
-            }
+        let messages: [[String: String]] = [
+            ["role": "system", "content": restatementPrompt],
+            ["role": "user", "content": input]
+        ]
+
+        let requestBody: [String: Any] = [
+            "model": model,
+            "messages": messages,
+            "max_tokens": 50,
+            "temperature": 0.3
+        ]
+
+        guard let url = URL(string: baseURL),
+              let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            completion(nil)
+            return
         }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = bodyData
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            guard let data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let choices = json["choices"] as? [[String: Any]],
+                  let message = choices.first?["message"] as? [String: Any],
+                  let content = message["content"] as? String else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
+            let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = (trimmed == "NONE" || trimmed.isEmpty) ? nil : trimmed
+
+            DispatchQueue.main.async { completion(result) }
+        }.resume()
     }
 
-    // MARK: - Streaming Execution
+    // MARK: - Think
 
-    /// Execute an AI action with streaming response
-    func execute(
-        action: Action,
-        userContent: String,
+    /// Think with AI using full session context
+    func think(
+        currentCell: String,
+        priorCells: [[String: String]],
         sourceContext: String?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
@@ -74,124 +133,29 @@ final class AIService {
 
         // Build messages
         var messages: [[String: String]] = [
-            ["role": "system", "content": action.systemPrompt]
+            ["role": "system", "content": thinkingPartnerPrompt]
         ]
 
         // Add source context if available
         if let context = sourceContext, !context.isEmpty {
             messages.append([
                 "role": "system",
-                "content": "Here is the reference material:\n\n\(context)"
+                "content": "Reference documents:\n\n\(context)"
             ])
         }
 
-        messages.append(["role": "user", "content": userContent])
+        // Add prior cells as conversation history
+        for cell in priorCells.dropLast() {
+            let role = cell["type"] == "aiResponse" ? "assistant" : "user"
+            if let content = cell["content"], !content.isEmpty {
+                messages.append(["role": role, "content": content])
+            }
+        }
+
+        // Add current cell as the latest user message
+        messages.append(["role": "user", "content": currentCell])
 
         // Build request
-        let requestBody: [String: Any] = [
-            "model": model,
-            "messages": messages,
-            "stream": true,
-            "max_tokens": 2048
-        ]
-
-        guard let url = URL(string: baseURL),
-              let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            onError(AIError.invalidRequest)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = bodyData
-
-        // Stream response
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error {
-                DispatchQueue.main.async { onError(error) }
-                return
-            }
-
-            guard let data,
-                  let httpResponse = response as? HTTPURLResponse else {
-                DispatchQueue.main.async { onError(AIError.invalidResponse) }
-                return
-            }
-
-            if httpResponse.statusCode != 200 {
-                let errorMessage = String(data: data, encoding: .utf8) ?? "Unknown error"
-                DispatchQueue.main.async { onError(AIError.apiError(httpResponse.statusCode, errorMessage)) }
-                return
-            }
-
-            // Parse SSE stream
-            self.parseSSEStream(data: data, onChunk: onChunk, onComplete: onComplete)
-        }
-        task.resume()
-    }
-
-    private func parseSSEStream(
-        data: Data,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping () -> Void
-    ) {
-        guard let text = String(data: data, encoding: .utf8) else {
-            DispatchQueue.main.async { onComplete() }
-            return
-        }
-
-        let lines = text.components(separatedBy: "\n")
-        for line in lines {
-            if line.hasPrefix("data: ") {
-                let jsonString = String(line.dropFirst(6))
-                if jsonString == "[DONE]" {
-                    DispatchQueue.main.async { onComplete() }
-                    return
-                }
-
-                if let jsonData = jsonString.data(using: .utf8),
-                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                   let choices = json["choices"] as? [[String: Any]],
-                   let delta = choices.first?["delta"] as? [String: Any],
-                   let content = delta["content"] as? String {
-                    DispatchQueue.main.async { onChunk(content) }
-                }
-            }
-        }
-
-        DispatchQueue.main.async { onComplete() }
-    }
-
-    // MARK: - Real Streaming with URLSession delegate
-
-    func executeStreaming(
-        action: Action,
-        userContent: String,
-        sourceContext: String?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping () -> Void,
-        onError: @escaping (Error) -> Void
-    ) {
-        guard let apiKey else {
-            onError(AIError.notConfigured)
-            return
-        }
-
-        var messages: [[String: String]] = [
-            ["role": "system", "content": action.systemPrompt]
-        ]
-
-        if let context = sourceContext, !context.isEmpty {
-            messages.append([
-                "role": "system",
-                "content": "Here is the reference material:\n\n\(context)"
-            ])
-        }
-
-        messages.append(["role": "user", "content": userContent])
-
         let requestBody: [String: Any] = [
             "model": model,
             "messages": messages,
@@ -241,7 +205,6 @@ private class StreamingDelegate: NSObject, URLSessionDataDelegate {
 
         buffer += text
 
-        // Process complete lines
         while let newlineIndex = buffer.firstIndex(of: "\n") {
             let line = String(buffer[..<newlineIndex])
             buffer = String(buffer[buffer.index(after: newlineIndex)...])
@@ -293,7 +256,7 @@ enum AIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .notConfigured:
-            return "OpenAI API key not configured. Set OPENAI_API_KEY environment variable."
+            return "OpenAI API key not configured. Go to Settings to add your key."
         case .invalidRequest:
             return "Failed to build API request"
         case .invalidResponse:

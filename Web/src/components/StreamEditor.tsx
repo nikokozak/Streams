@@ -2,7 +2,14 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Stream, Cell as CellType, SourceReference, bridge } from '../types';
 import { Cell } from './Cell';
 import { SourcePanel } from './SourcePanel';
-import { ActionMenu, Action, getFilteredActions } from './ActionMenu';
+import { markdownToHtml } from '../utils/markdown';
+
+// Strip HTML tags to get plain text
+function stripHtml(html: string): string {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  return tmp.textContent || tmp.innerText || '';
+}
 
 interface StreamEditorProps {
   stream: Stream;
@@ -17,18 +24,14 @@ interface StreamingCell {
 export function StreamEditor({ stream, onBack }: StreamEditorProps) {
   const [cells, setCells] = useState<CellType[]>(stream.cells);
   const [sources, setSources] = useState<SourceReference[]>(stream.sources);
+  const [title, setTitle] = useState(stream.title);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [newCellId, setNewCellId] = useState<string | null>(null);
   const [streamingCells, setStreamingCells] = useState<Map<string, StreamingCell>>(new Map());
   const [errorCells, setErrorCells] = useState<Map<string, string>>(new Map());
 
-  // Slash command menu state
-  const [showActionMenu, setShowActionMenu] = useState(false);
-  const [actionMenuFilter, setActionMenuFilter] = useState('');
-  const [actionMenuIndex, setActionMenuIndex] = useState(0);
-  const [actionMenuPosition, setActionMenuPosition] = useState({ top: 0, left: 0 });
-  const [pendingActionCellId, setPendingActionCellId] = useState<string | null>(null);
-
   const cellFocusRefs = useRef<Map<string, () => void>>(new Map());
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Listen for bridge messages
   useEffect(() => {
@@ -67,14 +70,16 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
 
       if (message.type === 'aiComplete' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const finalContent = streamingCells.get(cellId)?.content || '';
+        const rawContent = streamingCells.get(cellId)?.content || '';
+        // Convert markdown to HTML for TipTap
+        const htmlContent = markdownToHtml(rawContent);
 
         // Update cell with final content and save
         setCells(prev => prev.map(c =>
-          c.id === cellId ? { ...c, content: finalContent, updatedAt: new Date().toISOString() } : c
+          c.id === cellId ? { ...c, content: htmlContent, updatedAt: new Date().toISOString() } : c
         ));
 
-        // Save to Swift
+        // Save to Swift (store as HTML)
         const cell = cells.find(c => c.id === cellId);
         if (cell) {
           bridge.send({
@@ -82,7 +87,7 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
             payload: {
               id: cellId,
               streamId: stream.id,
-              content: finalContent,
+              content: htmlContent,
               type: 'aiResponse',
               order: cell.order,
             },
@@ -107,6 +112,35 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
           return updated;
         });
       }
+
+      // Handle restatement for user cells
+      if (message.type === 'cellRestatement' && message.payload?.cellId && message.payload?.restatement) {
+        const cellId = message.payload.cellId as string;
+        const restatement = message.payload.restatement as string;
+
+        console.log('Received restatement:', { cellId, restatement });
+
+        setCells(prev => {
+          const cell = prev.find(c => c.id === cellId);
+          if (cell) {
+            // Save the restatement to Swift
+            bridge.send({
+              type: 'saveCell',
+              payload: {
+                id: cellId,
+                streamId: stream.id,
+                content: cell.content,
+                type: cell.type,
+                order: cell.order,
+                restatement,
+              },
+            });
+          }
+          return prev.map(c =>
+            c.id === cellId ? { ...c, restatement } : c
+          );
+        });
+      }
     });
     return unsubscribe;
   }, [stream.id, cells, streamingCells]);
@@ -120,29 +154,6 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
   }, []);
 
   const handleCellUpdate = useCallback((cellId: string, content: string) => {
-    // Check for slash command
-    if (content.startsWith('/')) {
-      const commandText = content.slice(1);
-      const filtered = getFilteredActions(commandText);
-
-      if (filtered.length > 0) {
-        // Position menu near the cell
-        const cellElement = document.querySelector(`[data-cell-id="${cellId}"]`);
-        if (cellElement) {
-          const rect = cellElement.getBoundingClientRect();
-          setActionMenuPosition({ top: rect.bottom + 4, left: rect.left });
-        }
-
-        setShowActionMenu(true);
-        setActionMenuFilter(commandText);
-        setActionMenuIndex(0);
-        setPendingActionCellId(cellId);
-        return; // Don't save yet
-      }
-    } else {
-      setShowActionMenu(false);
-    }
-
     setCells(prev => {
       const updated = prev.map(c =>
         c.id === cellId ? { ...c, content, updatedAt: new Date().toISOString() } : c
@@ -166,14 +177,18 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     }
   }, [cells, stream.id]);
 
-  const executeAction = useCallback((action: Action) => {
-    if (!pendingActionCellId) return;
+  // Cmd+Enter: Send cell to AI with full context
+  const handleThink = useCallback((cellId: string) => {
+    const cellIndex = cells.findIndex(c => c.id === cellId);
+    const currentCell = cells[cellIndex];
+    if (!currentCell || !stripHtml(currentCell.content).trim()) return;
 
-    const sourceCell = cells.find(c => c.id === pendingActionCellId);
-    if (!sourceCell) return;
-
-    // Get content without the slash command
-    const content = sourceCell.content.replace(/^\/\w*\s*/, '').trim();
+    // Gather prior cells for context
+    const priorCells = cells.slice(0, cellIndex + 1).map(c => ({
+      id: c.id,
+      content: c.content,
+      type: c.type,
+    }));
 
     // Create AI response cell
     const aiCellId = crypto.randomUUID();
@@ -183,33 +198,16 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
       content: '',
       type: 'aiResponse',
       sourceBinding: null,
-      order: sourceCell.order + 1,
+      order: currentCell.order + 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
-    // Clear the source cell's slash command
+    // Insert AI cell after current
     setCells(prev => {
-      const sourceIndex = prev.findIndex(c => c.id === pendingActionCellId);
-      const updated = prev.map(c =>
-        c.id === pendingActionCellId ? { ...c, content } : c
-      );
-      // Insert AI cell after source
-      updated.splice(sourceIndex + 1, 0, aiCell);
-      // Update orders
+      const updated = [...prev];
+      updated.splice(cellIndex + 1, 0, aiCell);
       return updated.map((c, i) => ({ ...c, order: i }));
-    });
-
-    // Save source cell with cleaned content
-    bridge.send({
-      type: 'saveCell',
-      payload: {
-        id: pendingActionCellId,
-        streamId: stream.id,
-        content,
-        type: 'text',
-        order: sourceCell.order,
-      },
     });
 
     // Save AI cell
@@ -220,28 +218,30 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
         streamId: stream.id,
         content: '',
         type: 'aiResponse',
-        order: sourceCell.order + 1,
+        order: currentCell.order + 1,
       },
     });
 
     // Start streaming
     setStreamingCells(prev => new Map(prev).set(aiCellId, { id: aiCellId, content: '' }));
 
-    // Execute action
+    // Send think request with full context
+    // Include sourceCellId so Swift can generate a restatement for the user's question
+    // Strip HTML to send plain text to the AI
     bridge.send({
-      type: 'executeAction',
+      type: 'think',
       payload: {
-        action: action.id,
         cellId: aiCellId,
+        sourceCellId: currentCell.id,
         streamId: stream.id,
-        content: content || 'Please help with this.',
+        currentCell: stripHtml(currentCell.content),
+        priorCells: priorCells.map(c => ({
+          ...c,
+          content: stripHtml(c.content),
+        })),
       },
     });
-
-    // Close menu
-    setShowActionMenu(false);
-    setPendingActionCellId(null);
-  }, [pendingActionCellId, cells, stream.id]);
+  }, [cells, stream.id]);
 
   const handleCellDelete = useCallback((cellId: string) => {
     const index = cells.findIndex(c => c.id === cellId);
@@ -278,13 +278,11 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     setCells(prev => {
       const updated = [...prev];
       updated.splice(afterIndex + 1, 0, newCell);
-      // Update order for all subsequent cells
       return updated.map((c, i) => ({ ...c, order: i }));
     });
 
     setNewCellId(newCell.id);
 
-    // Save new cell to Swift
     bridge.send({
       type: 'saveCell',
       payload: {
@@ -319,33 +317,31 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     cellFocusRefs.current.set(cellId, focus);
   }, []);
 
-  // Handle keyboard navigation in action menu
-  useEffect(() => {
-    if (!showActionMenu) return;
+  // Title editing handlers
+  const startEditingTitle = useCallback(() => {
+    setIsEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }, []);
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const filtered = getFilteredActions(actionMenuFilter);
+  const saveTitle = useCallback(() => {
+    const trimmedTitle = title.trim() || 'Untitled';
+    setTitle(trimmedTitle);
+    setIsEditingTitle(false);
+    bridge.send({
+      type: 'updateStreamTitle',
+      payload: { id: stream.id, title: trimmedTitle },
+    });
+  }, [title, stream.id]);
 
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setActionMenuIndex(prev => Math.min(prev + 1, filtered.length - 1));
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setActionMenuIndex(prev => Math.max(prev - 1, 0));
-      } else if (e.key === 'Enter' || e.key === 'Tab') {
-        e.preventDefault();
-        const selected = filtered[actionMenuIndex];
-        if (selected) {
-          executeAction(selected);
-        }
-      } else if (e.key === 'Escape') {
-        setShowActionMenu(false);
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [showActionMenu, actionMenuFilter, actionMenuIndex, executeAction]);
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveTitle();
+    } else if (e.key === 'Escape') {
+      setTitle(stream.title);
+      setIsEditingTitle(false);
+    }
+  }, [saveTitle, stream.title]);
 
   // Create initial cell if stream is empty
   if (cells.length === 0) {
@@ -379,7 +375,23 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
         <button onClick={onBack} className="back-button">
           ← Back
         </button>
-        <h1>{stream.title}</h1>
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            type="text"
+            className="stream-title-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={saveTitle}
+            onKeyDown={handleTitleKeyDown}
+            autoFocus
+          />
+        ) : (
+          <h1 onClick={startEditingTitle} className="stream-title-editable">
+            {title}
+          </h1>
+        )}
+        <span className="stream-hint">Cmd+Enter to think with AI</span>
       </header>
 
       <div className="stream-body">
@@ -395,10 +407,12 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
                   cell={isStreaming ? { ...cell, content: streamingContent || '' } : cell}
                   isNew={cell.id === newCellId}
                   isStreaming={isStreaming}
+                  isOnlyCell={cells.length === 1}
                   error={error}
                   onUpdate={(content) => handleCellUpdate(cell.id, content)}
                   onDelete={() => handleCellDelete(cell.id)}
                   onEnter={() => handleCreateCell(index)}
+                  onThink={() => handleThink(cell.id)}
                   onFocusPrevious={() => handleFocusPrevious(index)}
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}
@@ -415,16 +429,6 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
           onSourceRemoved={handleSourceRemoved}
         />
       </div>
-
-      {showActionMenu && (
-        <ActionMenu
-          filter={actionMenuFilter}
-          selectedIndex={actionMenuIndex}
-          position={actionMenuPosition}
-          onSelect={executeAction}
-          onClose={() => setShowActionMenu(false)}
-        />
-      )}
     </div>
   );
 }

@@ -5,6 +5,8 @@ struct Cell: Identifiable, Codable {
     let id: UUID
     let streamId: UUID
     var content: String
+    /// Display title/heading form of content (for text cells that were sent to AI)
+    var restatement: String?
     var type: CellType
     var sourceBinding: SourceBinding?
     var order: Int
@@ -15,6 +17,7 @@ struct Cell: Identifiable, Codable {
         id: UUID = UUID(),
         streamId: UUID,
         content: String,
+        restatement: String? = nil,
         type: CellType = .text,
         sourceBinding: SourceBinding? = nil,
         order: Int = 0,
@@ -24,6 +27,7 @@ struct Cell: Identifiable, Codable {
         self.id = id
         self.streamId = streamId
         self.content = content
+        self.restatement = restatement
         self.type = type
         self.sourceBinding = sourceBinding
         self.order = order

@@ -69,6 +69,12 @@ final class PersistenceService {
             try db.create(index: "idx_cells_position", on: "cells", columns: ["stream_id", "position"])
         }
 
+        migrator.registerMigration("v2_cell_restatement") { db in
+            try db.alter(table: "cells") { t in
+                t.add(column: "restatement", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -127,10 +133,13 @@ final class PersistenceService {
                     sourceBinding = try JSONDecoder().decode(SourceBinding.self, from: Data(bindingJson.utf8))
                 }
 
+                let restatement: String? = row["restatement"]
+
                 return Cell(
                     id: UUID(uuidString: row["id"])!,
                     streamId: UUID(uuidString: row["stream_id"])!,
                     content: row["content"],
+                    restatement: restatement,
                     type: CellType(rawValue: row["type"]) ?? .text,
                     sourceBinding: sourceBinding,
                     order: row["position"],
@@ -191,10 +200,11 @@ final class PersistenceService {
 
             try db.execute(
                 sql: """
-                    INSERT INTO cells (id, stream_id, type, content, state, source_binding_json, metadata_json, created_at, updated_at, position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cells (id, stream_id, type, content, restatement, state, source_binding_json, metadata_json, created_at, updated_at, position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         content = excluded.content,
+                        restatement = excluded.restatement,
                         type = excluded.type,
                         state = excluded.state,
                         source_binding_json = excluded.source_binding_json,
@@ -206,6 +216,7 @@ final class PersistenceService {
                     cell.streamId.uuidString,
                     cell.type.rawValue,
                     cell.content,
+                    cell.restatement,
                     "idle",
                     bindingJson,
                     metadataJson,

@@ -9,6 +9,7 @@ interface CellEditorProps {
   autoFocus?: boolean;
   onChange: (content: string) => void;
   onEnter?: () => void;
+  onThink?: () => void;
   onBackspaceEmpty?: () => void;
   onArrowUp?: () => void;
   onArrowDown?: () => void;
@@ -20,6 +21,7 @@ export function CellEditor({
   autoFocus = false,
   onChange,
   onEnter,
+  onThink,
   onBackspaceEmpty,
   onArrowUp,
   onArrowDown,
@@ -27,12 +29,9 @@ export function CellEditor({
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
-        heading: false,
-        bulletList: false,
-        orderedList: false,
-        blockquote: false,
-        codeBlock: false,
-        horizontalRule: false,
+        heading: {
+          levels: [1, 2, 3],
+        },
       }),
       Placeholder.configure({
         placeholder,
@@ -48,6 +47,15 @@ export function CellEditor({
         const { state } = view;
         const { selection } = state;
         const { empty, $anchor } = selection;
+
+        // Cmd+Enter - think with AI
+        if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+          if (onThink) {
+            event.preventDefault();
+            onThink();
+            return true;
+          }
+        }
 
         // Enter at end of content - create new cell
         if (event.key === 'Enter' && !event.shiftKey) {
@@ -94,13 +102,13 @@ export function CellEditor({
       },
     },
     onUpdate: ({ editor }) => {
-      onChange(editor.getText());
+      onChange(editor.getHTML());
     },
   });
 
   // Update content when prop changes
   useEffect(() => {
-    if (editor && content !== editor.getText()) {
+    if (editor && content !== editor.getHTML()) {
       editor.commands.setContent(content);
     }
   }, [content, editor]);

@@ -9,6 +9,8 @@ export function App() {
   const [view, setView] = useState<View>('list');
   const [streams, setStreams] = useState<StreamSummary[]>([]);
   const [currentStream, setCurrentStream] = useState<Stream | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingStream, setIsLoadingStream] = useState(false);
 
   useEffect(() => {
     // Subscribe to bridge messages
@@ -16,9 +18,11 @@ export function App() {
       switch (message.type) {
         case 'streamsLoaded':
           setStreams((message.payload?.streams as StreamSummary[]) || []);
+          setIsLoading(false);
           break;
         case 'streamLoaded':
           setCurrentStream(message.payload?.stream as Stream);
+          setIsLoadingStream(false);
           setView('stream');
           break;
       }
@@ -37,6 +41,7 @@ export function App() {
   };
 
   const handleSelectStream = (id: string) => {
+    setIsLoadingStream(true);
     bridge.send({ type: 'loadStream', payload: { id } });
   };
 
@@ -70,6 +75,8 @@ export function App() {
   return (
     <StreamListView
       streams={streams}
+      isLoading={isLoading}
+      isLoadingStream={isLoadingStream}
       onSelect={handleSelectStream}
       onCreate={handleCreateStream}
       onSettings={handleOpenSettings}
@@ -79,12 +86,14 @@ export function App() {
 
 interface StreamListViewProps {
   streams: StreamSummary[];
+  isLoading: boolean;
+  isLoadingStream: boolean;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onSettings: () => void;
 }
 
-function StreamListView({ streams, onSelect, onCreate, onSettings }: StreamListViewProps) {
+function StreamListView({ streams, isLoading, isLoadingStream, onSelect, onCreate, onSettings }: StreamListViewProps) {
   return (
     <div className="stream-list">
       <header className="stream-list-header">
@@ -93,22 +102,33 @@ function StreamListView({ streams, onSelect, onCreate, onSettings }: StreamListV
           <button onClick={onSettings} className="settings-button">
             Settings
           </button>
-          <button onClick={onCreate}>New Stream</button>
+          <button onClick={onCreate} className="primary-button">New Stream</button>
         </div>
       </header>
       <div className="stream-list-content">
-        {streams.length === 0 ? (
-          <p className="empty-state">No streams yet. Create one to get started.</p>
+        {isLoading ? (
+          <div className="loading-state">
+            <div className="loading-spinner" />
+            <p>Loading...</p>
+          </div>
+        ) : streams.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">📝</div>
+            <h2>No streams yet</h2>
+            <p>Create a stream to start capturing your thoughts.</p>
+            <button onClick={onCreate} className="primary-button">Create your first stream</button>
+          </div>
         ) : (
           streams.map((stream) => (
             <button
               key={stream.id}
-              className="stream-item"
+              className={`stream-item ${isLoadingStream ? 'stream-item--loading' : ''}`}
               onClick={() => onSelect(stream.id)}
+              disabled={isLoadingStream}
             >
               <span className="stream-title">{stream.title}</span>
               <span className="stream-meta">
-                {stream.sourceCount} sources · {stream.cellCount} cells
+                {stream.sourceCount} {stream.sourceCount === 1 ? 'source' : 'sources'} · {stream.cellCount} {stream.cellCount === 1 ? 'cell' : 'cells'}
               </span>
             </button>
           ))

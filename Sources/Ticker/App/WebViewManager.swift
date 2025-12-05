@@ -122,6 +122,24 @@ final class WebViewManager: NSObject {
                 print("Failed to create stream: \(error)")
             }
 
+        case "updateStreamTitle":
+            guard let payload = message.payload,
+                  let idValue = payload["id"]?.value as? String,
+                  let id = UUID(uuidString: idValue),
+                  let title = payload["title"]?.value as? String else {
+                print("Invalid updateStreamTitle payload")
+                return
+            }
+            do {
+                if var stream = try persistence.loadStream(id: id) {
+                    stream.title = title
+                    try persistence.updateStream(stream)
+                    bridgeService.send(BridgeMessage(type: "streamTitleUpdated", payload: ["id": AnyCodable(id.uuidString), "title": AnyCodable(title)]))
+                }
+            } catch {
+                print("Failed to update stream title: \(error)")
+            }
+
         case "deleteStream":
             guard let payload = message.payload,
                   let idValue = payload["id"]?.value as? String,
@@ -226,14 +244,27 @@ final class WebViewManager: NSObject {
                 print("Failed to remove source: \(error)")
             }
 
-        case "executeAction":
+        case "think":
             guard let payload = message.payload,
-                  let actionName = payload["action"]?.value as? String,
-                  let action = AIService.Action(rawValue: actionName),
                   let cellId = payload["cellId"]?.value as? String,
-                  let userContent = payload["content"]?.value as? String else {
-                print("Invalid executeAction payload")
+                  let currentCell = payload["currentCell"]?.value as? String else {
+                print("Invalid think payload")
                 return
+            }
+
+            // Parse prior cells
+            var priorCells: [[String: String]] = []
+            if let priorCellsRaw = payload["priorCells"]?.value as? [[String: Any]] {
+                for cell in priorCellsRaw {
+                    var cellDict: [String: String] = [:]
+                    if let content = cell["content"] as? String {
+                        cellDict["content"] = content
+                    }
+                    if let type = cell["type"] as? String {
+                        cellDict["type"] = type
+                    }
+                    priorCells.append(cellDict)
+                }
             }
 
             // Get source context if stream has sources
@@ -253,15 +284,32 @@ final class WebViewManager: NSObject {
             guard aiService.isConfigured else {
                 bridgeService.send(BridgeMessage(
                     type: "aiError",
-                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured")]
+                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured. Go to Settings to add your key.")]
                 ))
                 return
             }
 
-            // Execute with streaming
-            aiService.executeStreaming(
-                action: action,
-                userContent: userContent,
+            // Get the source cell ID (the user's question cell)
+            let sourceCellId = payload["sourceCellId"]?.value as? String
+            print("Think request - sourceCellId: \(sourceCellId ?? "nil"), currentCell: \(currentCell.prefix(50))")
+
+            // Generate restatement for the user's question (in parallel with thinking)
+            if let sourceCellId {
+                aiService.generateRestatement(for: currentCell) { [weak self] restatement in
+                    print("Restatement result: \(restatement ?? "nil")")
+                    if let restatement {
+                        self?.bridgeService.send(BridgeMessage(
+                            type: "cellRestatement",
+                            payload: ["cellId": AnyCodable(sourceCellId), "restatement": AnyCodable(restatement)]
+                        ))
+                    }
+                }
+            }
+
+            // Think with streaming
+            aiService.think(
+                currentCell: currentCell,
+                priorCells: priorCells,
                 sourceContext: sourceContext,
                 onChunk: { [weak self] chunk in
                     self?.bridgeService.send(BridgeMessage(
@@ -339,7 +387,7 @@ final class WebViewManager: NSObject {
                 return dict
             },
             "cells": stream.cells.map { cell -> [String: Any] in
-                [
+                var dict: [String: Any] = [
                     "id": cell.id.uuidString,
                     "streamId": cell.streamId.uuidString,
                     "content": cell.content,
@@ -348,6 +396,10 @@ final class WebViewManager: NSObject {
                     "createdAt": formatter.string(from: cell.createdAt),
                     "updatedAt": formatter.string(from: cell.updatedAt)
                 ]
+                if let restatement = cell.restatement {
+                    dict["restatement"] = restatement
+                }
+                return dict
             },
             "createdAt": formatter.string(from: stream.createdAt),
             "updatedAt": formatter.string(from: stream.updatedAt)
@@ -385,11 +437,13 @@ final class WebViewManager: NSObject {
         let typeRaw = payload["type"]?.value as? String ?? "text"
         let type = CellType(rawValue: typeRaw) ?? .text
         let order = payload["order"]?.value as? Int ?? 0
+        let restatement = payload["restatement"]?.value as? String
 
         return Cell(
             id: id,
             streamId: streamId,
             content: content,
+            restatement: restatement,
             type: type,
             order: order
         )
