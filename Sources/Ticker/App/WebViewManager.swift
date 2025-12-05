@@ -67,16 +67,20 @@ final class WebViewManager: NSObject {
         case "loadStreams":
             do {
                 let summaries = try persistence.loadStreamSummaries()
+                let formatter = ISO8601DateFormatter()
                 let payload: [String: AnyCodable] = [
-                    "streams": AnyCodable(summaries.map { summary in
-                        [
+                    "streams": AnyCodable(summaries.map { summary -> [String: Any] in
+                        var dict: [String: Any] = [
                             "id": summary.id.uuidString,
                             "title": summary.title,
                             "sourceCount": summary.sourceCount,
                             "cellCount": summary.cellCount,
-                            "updatedAt": ISO8601DateFormatter().string(from: summary.updatedAt),
-                            "previewText": summary.previewText as Any
+                            "updatedAt": formatter.string(from: summary.updatedAt)
                         ]
+                        if let previewText = summary.previewText {
+                            dict["previewText"] = previewText
+                        }
+                        return dict
                     })
                 ]
                 bridgeService.send(BridgeMessage(type: "streamsLoaded", payload: payload))
@@ -121,16 +125,20 @@ final class WebViewManager: NSObject {
                 try persistence.deleteStream(id: id)
                 // Reload streams list
                 let summaries = try persistence.loadStreamSummaries()
+                let formatter = ISO8601DateFormatter()
                 let summariesPayload: [String: AnyCodable] = [
-                    "streams": AnyCodable(summaries.map { summary in
-                        [
+                    "streams": AnyCodable(summaries.map { summary -> [String: Any] in
+                        var dict: [String: Any] = [
                             "id": summary.id.uuidString,
                             "title": summary.title,
                             "sourceCount": summary.sourceCount,
                             "cellCount": summary.cellCount,
-                            "updatedAt": ISO8601DateFormatter().string(from: summary.updatedAt),
-                            "previewText": summary.previewText as Any
+                            "updatedAt": formatter.string(from: summary.updatedAt)
                         ]
+                        if let previewText = summary.previewText {
+                            dict["previewText"] = previewText
+                        }
+                        return dict
                     })
                 ]
                 bridgeService.send(BridgeMessage(type: "streamsLoaded", payload: summariesPayload))
@@ -189,18 +197,21 @@ final class WebViewManager: NSObject {
         return [
             "id": stream.id.uuidString,
             "title": stream.title,
-            "sources": stream.sources.map { source in
-                [
+            "sources": stream.sources.map { source -> [String: Any] in
+                var dict: [String: Any] = [
                     "id": source.id.uuidString,
                     "streamId": source.streamId.uuidString,
                     "displayName": source.displayName,
                     "fileType": source.fileType.rawValue,
                     "status": source.status.rawValue,
-                    "pageCount": source.pageCount as Any,
                     "addedAt": formatter.string(from: source.addedAt)
                 ]
+                if let pageCount = source.pageCount {
+                    dict["pageCount"] = pageCount
+                }
+                return dict
             },
-            "cells": stream.cells.map { cell in
+            "cells": stream.cells.map { cell -> [String: Any] in
                 [
                     "id": cell.id.uuidString,
                     "streamId": cell.streamId.uuidString,

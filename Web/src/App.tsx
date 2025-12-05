@@ -11,19 +11,25 @@ export function App() {
   useEffect(() => {
     // Subscribe to bridge messages
     const unsubscribe = bridge.onMessage((message) => {
+      console.log('Bridge message received:', message.type, message.payload);
       switch (message.type) {
         case 'streamsLoaded':
-          setStreams(message.payload?.streams as StreamSummary[]);
+          console.log('Setting streams:', message.payload?.streams);
+          setStreams((message.payload?.streams as StreamSummary[]) || []);
           break;
         case 'streamLoaded':
+          console.log('Setting current stream:', message.payload?.stream);
           setCurrentStream(message.payload?.stream as Stream);
           setView('stream');
           break;
       }
     });
 
-    // Request initial data
-    bridge.send({ type: 'loadStreams' });
+    // Request initial data after a short delay to ensure bridge is ready
+    setTimeout(() => {
+      console.log('Requesting loadStreams');
+      bridge.send({ type: 'loadStreams' });
+    }, 100);
 
     return unsubscribe;
   }, []);
