@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
+import { Settings } from './components/Settings';
 
-type View = 'list' | 'stream';
+type View = 'list' | 'stream' | 'settings';
 
 export function App() {
   const [view, setView] = useState<View>('list');
@@ -45,6 +46,18 @@ export function App() {
     bridge.send({ type: 'loadStreams' });
   };
 
+  const handleOpenSettings = () => {
+    setView('settings');
+  };
+
+  const handleCloseSettings = () => {
+    setView('list');
+  };
+
+  if (view === 'settings') {
+    return <Settings onClose={handleCloseSettings} />;
+  }
+
   if (view === 'stream' && currentStream) {
     return (
       <StreamEditor
@@ -59,6 +72,7 @@ export function App() {
       streams={streams}
       onSelect={handleSelectStream}
       onCreate={handleCreateStream}
+      onSettings={handleOpenSettings}
     />
   );
 }
@@ -67,14 +81,20 @@ interface StreamListViewProps {
   streams: StreamSummary[];
   onSelect: (id: string) => void;
   onCreate: () => void;
+  onSettings: () => void;
 }
 
-function StreamListView({ streams, onSelect, onCreate }: StreamListViewProps) {
+function StreamListView({ streams, onSelect, onCreate, onSettings }: StreamListViewProps) {
   return (
     <div className="stream-list">
       <header className="stream-list-header">
         <h1>Streams</h1>
-        <button onClick={onCreate}>New Stream</button>
+        <div className="stream-list-actions">
+          <button onClick={onSettings} className="settings-button">
+            Settings
+          </button>
+          <button onClick={onCreate}>New Stream</button>
+        </div>
       </header>
       <div className="stream-list-content">
         {streams.length === 0 ? (

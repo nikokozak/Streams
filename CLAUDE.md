@@ -227,6 +227,7 @@ window.webkit.messageHandlers.bridge.postMessage({
 - `IMPLEMENTATION_PLAN.md` - Full specification (the contract)
 - `Package.swift` - Swift dependencies
 - `Web/package.json` - JS dependencies
+- `/Users/niko/Documents/ITP/ChatWindow` - Original Ticker (V1) for UI inspiration and patterns
 
 ---
 

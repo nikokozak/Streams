@@ -2,18 +2,23 @@ import Foundation
 
 /// Handles AI interactions with OpenAI API
 final class AIService {
-    private let apiKey: String?
+    private let settings: SettingsService
     private let baseURL = "https://api.openai.com/v1/chat/completions"
     private let model = "gpt-4o-mini"
 
-    init() {
-        // Try to get API key from environment or UserDefaults
-        self.apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
-            ?? UserDefaults.standard.string(forKey: "openai_api_key")
+    init(settings: SettingsService = .shared) {
+        self.settings = settings
+    }
+
+    /// Get API key from settings or environment
+    private var apiKey: String? {
+        // Settings takes priority, then environment variable
+        settings.openaiAPIKey ?? ProcessInfo.processInfo.environment["OPENAI_API_KEY"]
     }
 
     var isConfigured: Bool {
-        apiKey != nil && !apiKey!.isEmpty
+        guard let key = apiKey else { return false }
+        return !key.isEmpty
     }
 
     // MARK: - Actions

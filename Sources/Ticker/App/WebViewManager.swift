@@ -287,6 +287,31 @@ final class WebViewManager: NSObject {
             // TODO: Export stream
             break
 
+        case "loadSettings":
+            let settings = SettingsService.shared.allSettings()
+            bridgeService.send(BridgeMessage(
+                type: "settingsLoaded",
+                payload: ["settings": AnyCodable(settings)]
+            ))
+
+        case "saveSettings":
+            guard let payload = message.payload else {
+                print("Invalid saveSettings payload")
+                return
+            }
+
+            // Save OpenAI API key if provided
+            if let openaiKey = payload["openaiAPIKey"]?.value as? String {
+                SettingsService.shared.openaiAPIKey = openaiKey.isEmpty ? nil : openaiKey
+            }
+
+            // Send back updated settings
+            let settings = SettingsService.shared.allSettings()
+            bridgeService.send(BridgeMessage(
+                type: "settingsLoaded",
+                payload: ["settings": AnyCodable(settings)]
+            ))
+
         default:
             print("Unknown message type: \(message.type)")
         }
