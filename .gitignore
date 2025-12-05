@@ -1,0 +1,24 @@
+# Swift
+.build/
+.swiftpm/
+Package.resolved
+
+# Web
+Web/node_modules/
+Web/dist/
+
+# Build output
+Sources/Ticker/Resources/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.xcodeproj/
+*.xcworkspace/
+
+# Environment
+.env
+.env.local
