@@ -4,6 +4,7 @@ import WebKit
 final class WebViewManager: NSObject {
     let webView: WKWebView
     private let bridgeService: BridgeService
+    private let persistence: PersistenceService?
 
     override init() {
         let config = WKWebViewConfiguration()
@@ -13,6 +14,15 @@ final class WebViewManager: NSObject {
         config.userContentController.add(bridgeService, name: "bridge")
 
         self.webView = WKWebView(frame: .zero, configuration: config)
+
+        // Initialize persistence
+        do {
+            self.persistence = try PersistenceService()
+        } catch {
+            print("Failed to initialize persistence: \(error)")
+            self.persistence = nil
+        }
+
         super.init()
 
         webView.autoresizingMask = [.width, .height]
@@ -48,26 +58,112 @@ final class WebViewManager: NSObject {
     }
 
     private func processMessage(_ message: BridgeMessage) async {
+        guard let persistence else {
+            print("Persistence not available")
+            return
+        }
+
         switch message.type {
         case "loadStreams":
-            // TODO: Load streams from persistence
-            break
+            do {
+                let summaries = try persistence.loadStreamSummaries()
+                let payload: [String: AnyCodable] = [
+                    "streams": AnyCodable(summaries.map { summary in
+                        [
+                            "id": summary.id.uuidString,
+                            "title": summary.title,
+                            "sourceCount": summary.sourceCount,
+                            "cellCount": summary.cellCount,
+                            "updatedAt": ISO8601DateFormatter().string(from: summary.updatedAt),
+                            "previewText": summary.previewText as Any
+                        ]
+                    })
+                ]
+                bridgeService.send(BridgeMessage(type: "streamsLoaded", payload: payload))
+            } catch {
+                print("Failed to load streams: \(error)")
+            }
 
         case "loadStream":
-            // TODO: Load single stream
-            break
+            guard let payload = message.payload,
+                  let idValue = payload["id"]?.value as? String,
+                  let id = UUID(uuidString: idValue) else {
+                print("Invalid loadStream payload")
+                return
+            }
+            do {
+                if let stream = try persistence.loadStream(id: id) {
+                    let streamPayload = encodeStream(stream)
+                    bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
+                }
+            } catch {
+                print("Failed to load stream: \(error)")
+            }
 
         case "createStream":
-            // TODO: Create new stream
-            break
+            let title = (message.payload?["title"]?.value as? String) ?? "Untitled"
+            do {
+                let stream = try persistence.createStream(title: title)
+                let streamPayload = encodeStream(stream)
+                bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
+            } catch {
+                print("Failed to create stream: \(error)")
+            }
+
+        case "deleteStream":
+            guard let payload = message.payload,
+                  let idValue = payload["id"]?.value as? String,
+                  let id = UUID(uuidString: idValue) else {
+                print("Invalid deleteStream payload")
+                return
+            }
+            do {
+                try persistence.deleteStream(id: id)
+                // Reload streams list
+                let summaries = try persistence.loadStreamSummaries()
+                let summariesPayload: [String: AnyCodable] = [
+                    "streams": AnyCodable(summaries.map { summary in
+                        [
+                            "id": summary.id.uuidString,
+                            "title": summary.title,
+                            "sourceCount": summary.sourceCount,
+                            "cellCount": summary.cellCount,
+                            "updatedAt": ISO8601DateFormatter().string(from: summary.updatedAt),
+                            "previewText": summary.previewText as Any
+                        ]
+                    })
+                ]
+                bridgeService.send(BridgeMessage(type: "streamsLoaded", payload: summariesPayload))
+            } catch {
+                print("Failed to delete stream: \(error)")
+            }
 
         case "saveCell":
-            // TODO: Save cell
-            break
+            guard let payload = message.payload else {
+                print("Invalid saveCell payload")
+                return
+            }
+            do {
+                let cell = try decodeCell(from: payload)
+                try persistence.saveCell(cell)
+                bridgeService.send(BridgeMessage(type: "cellSaved", payload: ["id": AnyCodable(cell.id.uuidString)]))
+            } catch {
+                print("Failed to save cell: \(error)")
+            }
 
         case "deleteCell":
-            // TODO: Delete cell
-            break
+            guard let payload = message.payload,
+                  let idValue = payload["id"]?.value as? String,
+                  let id = UUID(uuidString: idValue) else {
+                print("Invalid deleteCell payload")
+                return
+            }
+            do {
+                try persistence.deleteCell(id: id)
+                bridgeService.send(BridgeMessage(type: "cellDeleted", payload: ["id": AnyCodable(id.uuidString)]))
+            } catch {
+                print("Failed to delete cell: \(error)")
+            }
 
         case "addSource":
             // TODO: Open file picker, add source
@@ -84,6 +180,62 @@ final class WebViewManager: NSObject {
         default:
             print("Unknown message type: \(message.type)")
         }
+    }
+
+    // MARK: - Encoding/Decoding Helpers
+
+    private func encodeStream(_ stream: Stream) -> [String: Any] {
+        let formatter = ISO8601DateFormatter()
+        return [
+            "id": stream.id.uuidString,
+            "title": stream.title,
+            "sources": stream.sources.map { source in
+                [
+                    "id": source.id.uuidString,
+                    "streamId": source.streamId.uuidString,
+                    "displayName": source.displayName,
+                    "fileType": source.fileType.rawValue,
+                    "status": source.status.rawValue,
+                    "pageCount": source.pageCount as Any,
+                    "addedAt": formatter.string(from: source.addedAt)
+                ]
+            },
+            "cells": stream.cells.map { cell in
+                [
+                    "id": cell.id.uuidString,
+                    "streamId": cell.streamId.uuidString,
+                    "content": cell.content,
+                    "type": cell.type.rawValue,
+                    "order": cell.order,
+                    "createdAt": formatter.string(from: cell.createdAt),
+                    "updatedAt": formatter.string(from: cell.updatedAt)
+                ]
+            },
+            "createdAt": formatter.string(from: stream.createdAt),
+            "updatedAt": formatter.string(from: stream.updatedAt)
+        ]
+    }
+
+    private func decodeCell(from payload: [String: AnyCodable]) throws -> Cell {
+        guard let idValue = payload["id"]?.value as? String,
+              let id = UUID(uuidString: idValue),
+              let streamIdValue = payload["streamId"]?.value as? String,
+              let streamId = UUID(uuidString: streamIdValue),
+              let content = payload["content"]?.value as? String else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Invalid cell payload"))
+        }
+
+        let typeRaw = payload["type"]?.value as? String ?? "text"
+        let type = CellType(rawValue: typeRaw) ?? .text
+        let order = payload["order"]?.value as? Int ?? 0
+
+        return Cell(
+            id: id,
+            streamId: streamId,
+            content: content,
+            type: type,
+            order: order
+        )
     }
 }
 
