@@ -1,7 +1,6 @@
 import WebKit
 
 /// Manages the WKWebView and Swift ↔ JS bridge
-@MainActor
 final class WebViewManager: NSObject {
     let webView: WKWebView
     private let bridgeService: BridgeService
@@ -16,12 +15,15 @@ final class WebViewManager: NSObject {
         self.webView = WKWebView(frame: .zero, configuration: config)
         super.init()
 
+        webView.autoresizingMask = [.width, .height]
         webView.navigationDelegate = self
         bridgeService.webView = webView
         bridgeService.onMessage = { [weak self] message in
             self?.handleMessage(message)
         }
+    }
 
+    func load() {
         loadWebContent()
     }
 
@@ -86,19 +88,19 @@ final class WebViewManager: NSObject {
 }
 
 extension WebViewManager: WKNavigationDelegate {
-    nonisolated func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         print("WebView: Started loading")
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         print("WebView: Finished loading")
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         print("WebView: Failed with error: \(error.localizedDescription)")
     }
 
-    nonisolated func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("WebView: Failed provisional navigation: \(error.localizedDescription)")
     }
 }

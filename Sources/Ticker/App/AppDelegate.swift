@@ -1,23 +1,32 @@
 import AppKit
 import WebKit
 
+// Manual entry point for proper app initialization
 @main
-@MainActor
+struct TickerApp {
+    static func main() {
+        let app = NSApplication.shared
+        let delegate = AppDelegate()
+        app.delegate = delegate
+        app.setActivationPolicy(.regular)
+        app.run()
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var webViewManager: WebViewManager?
 
-    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
-        Task { @MainActor in
-            setupMainWindow()
-        }
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        setupMainWindow()
+        NSApp.activate(ignoringOtherApps: true)
     }
 
-    nonisolated func applicationWillTerminate(_ notification: Notification) {
+    func applicationWillTerminate(_ notification: Notification) {
         // Cleanup
     }
 
-    nonisolated func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
 
@@ -35,9 +44,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.center()
         mainWindow?.minSize = NSSize(width: 600, height: 400)
 
-        // Set up WebView
         webViewManager = WebViewManager()
         mainWindow?.contentView = webViewManager?.webView
+        webViewManager?.load()
 
         mainWindow?.makeKeyAndOrderFront(nil)
     }

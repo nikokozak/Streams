@@ -68,7 +68,6 @@ struct AnyCodable: Codable {
 }
 
 /// Handles WKWebView script message communication
-@MainActor
 final class BridgeService: NSObject, WKScriptMessageHandler {
     weak var webView: WKWebView?
     var onMessage: ((BridgeMessage) -> Void)?
