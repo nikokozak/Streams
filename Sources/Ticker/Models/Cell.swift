@@ -7,6 +7,8 @@ struct Cell: Identifiable, Codable {
     var content: String
     /// Display title/heading form of content (for text cells that were sent to AI)
     var restatement: String?
+    /// Original user prompt (for aiResponse cells that transformed from text cells)
+    var originalPrompt: String?
     var type: CellType
     var sourceBinding: SourceBinding?
     var order: Int
@@ -18,6 +20,7 @@ struct Cell: Identifiable, Codable {
         streamId: UUID,
         content: String,
         restatement: String? = nil,
+        originalPrompt: String? = nil,
         type: CellType = .text,
         sourceBinding: SourceBinding? = nil,
         order: Int = 0,
@@ -28,6 +31,7 @@ struct Cell: Identifiable, Codable {
         self.streamId = streamId
         self.content = content
         self.restatement = restatement
+        self.originalPrompt = originalPrompt
         self.type = type
         self.sourceBinding = sourceBinding
         self.order = order

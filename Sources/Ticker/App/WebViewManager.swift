@@ -316,23 +316,6 @@ final class WebViewManager: NSObject {
                 return
             }
 
-            // Get the source cell ID (the user's question cell)
-            let sourceCellId = payload["sourceCellId"]?.value as? String
-            print("Think request - sourceCellId: \(sourceCellId ?? "nil"), currentCell: \(currentCell.prefix(50))")
-
-            // Generate restatement for the user's question (in parallel with thinking)
-            if let sourceCellId {
-                aiService.generateRestatement(for: currentCell) { [weak self] restatement in
-                    print("Restatement result: \(restatement ?? "nil")")
-                    if let restatement {
-                        self?.bridgeService.send(BridgeMessage(
-                            type: "cellRestatement",
-                            payload: ["cellId": AnyCodable(sourceCellId), "restatement": AnyCodable(restatement)]
-                        ))
-                    }
-                }
-            }
-
             // Define callbacks for streaming
             let onChunk: (String) -> Void = { [weak self] chunk in
                 self?.bridgeService.send(BridgeMessage(
@@ -455,6 +438,9 @@ final class WebViewManager: NSObject {
                 if let restatement = cell.restatement {
                     dict["restatement"] = restatement
                 }
+                if let originalPrompt = cell.originalPrompt {
+                    dict["originalPrompt"] = originalPrompt
+                }
                 return dict
             },
             "createdAt": formatter.string(from: stream.createdAt),
@@ -494,12 +480,14 @@ final class WebViewManager: NSObject {
         let type = CellType(rawValue: typeRaw) ?? .text
         let order = payload["order"]?.value as? Int ?? 0
         let restatement = payload["restatement"]?.value as? String
+        let originalPrompt = payload["originalPrompt"]?.value as? String
 
         return Cell(
             id: id,
             streamId: streamId,
             content: content,
             restatement: restatement,
+            originalPrompt: originalPrompt,
             type: type,
             order: order
         )

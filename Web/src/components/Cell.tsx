@@ -51,6 +51,17 @@ export function Cell({
     prevRestatementRef.current = cell.restatement;
   }, [cell.restatement]);
 
+  // Check if content is empty (strip HTML tags for check)
+  const isContentEmpty = (content: string) => {
+    const text = content.replace(/<[^>]*>/g, '').trim();
+    return text.length === 0;
+  };
+
+  // Trim trailing empty paragraphs from HTML content
+  const trimEmptyLines = (html: string): string => {
+    return html.replace(/(<p>(\s|<br\s*\/?>)*<\/p>\s*)+$/gi, '');
+  };
+
   // Debounced save
   const handleChange = (content: string) => {
     setLocalContent(content);
@@ -71,15 +82,13 @@ export function Cell({
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
-    if (localContent !== cell.content) {
-      onUpdate(localContent);
+    const trimmedContent = trimEmptyLines(localContent);
+    if (trimmedContent !== localContent) {
+      setLocalContent(trimmedContent);
     }
-  };
-
-  // Check if content is empty (strip HTML tags for check)
-  const isContentEmpty = (content: string) => {
-    const text = content.replace(/<[^>]*>/g, '').trim();
-    return text.length === 0;
+    if (trimmedContent !== cell.content) {
+      onUpdate(trimmedContent);
+    }
   };
 
   // Handle focus
@@ -147,10 +156,16 @@ export function Cell({
   // Show restatement view when: has restatement, not focused, not new
   const showRestatementView = hasRestatement && !isFocused && !isNew;
 
+  // Tooltip for AI cells with original prompt
+  const tooltipText = cell.type === 'aiResponse' && cell.originalPrompt
+    ? `Asked: ${cell.originalPrompt}`
+    : undefined;
+
   return (
     <div
       ref={containerRef}
       className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''}`}
+      title={tooltipText}
       onBlur={handleBlur}
       onFocus={handleFocus}
     >

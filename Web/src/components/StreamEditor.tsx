@@ -108,34 +108,6 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
         });
       }
 
-      // Handle restatement for user cells
-      if (message.type === 'cellRestatement' && message.payload?.cellId && message.payload?.restatement) {
-        const cellId = message.payload.cellId as string;
-        const restatement = message.payload.restatement as string;
-
-        console.log('Received restatement:', { cellId, restatement });
-
-        setCells(prev => {
-          const cell = prev.find(c => c.id === cellId);
-          if (cell) {
-            // Save the restatement to Swift
-            bridge.send({
-              type: 'saveCell',
-              payload: {
-                id: cellId,
-                streamId: stream.id,
-                content: cell.content,
-                type: cell.type,
-                order: cell.order,
-                restatement,
-              },
-            });
-          }
-          return prev.map(c =>
-            c.id === cellId ? { ...c, restatement } : c
-          );
-        });
-      }
     });
     return unsubscribe;
   }, [stream.id, cells, streamingCells]);
@@ -172,87 +144,64 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     }
   }, [cells, stream.id]);
 
-  // Cmd+Enter: Send cell to AI with full context
+  // Cmd+Enter: Transform current cell into AI response
   const handleThink = useCallback((cellId: string) => {
     const cellIndex = cells.findIndex(c => c.id === cellId);
     const currentCell = cells[cellIndex];
-    if (!currentCell || !stripHtml(currentCell.content).trim()) return;
+    const originalPrompt = stripHtml(currentCell?.content || '').trim();
+    if (!currentCell || !originalPrompt) return;
 
-    // Check if next cell is an AI response - if so, replace it instead of creating new
-    const nextCell = cells[cellIndex + 1];
-    const shouldReplace = nextCell?.type === 'aiResponse';
-
-    // Gather prior cells for context (exclude the AI response we're replacing)
-    const priorCells = cells.slice(0, cellIndex + 1).map(c => ({
+    // Gather prior cells for context (exclude current cell since it's transforming)
+    const priorCells = cells.slice(0, cellIndex).map(c => ({
       id: c.id,
       content: c.content,
       type: c.type,
     }));
 
-    let aiCellId: string;
+    // Transform the current cell into an AI response
+    setCells(prev => prev.map(c =>
+      c.id === cellId
+        ? {
+            ...c,
+            type: 'aiResponse' as const,
+            originalPrompt,
+            content: '',
+            restatement: undefined,
+            updatedAt: new Date().toISOString(),
+          }
+        : c
+    ));
 
-    if (shouldReplace) {
-      // Reuse existing AI cell
-      aiCellId = nextCell.id;
-
-      // Clear its content
-      setCells(prev => prev.map(c =>
-        c.id === aiCellId ? { ...c, content: '', updatedAt: new Date().toISOString() } : c
-      ));
-    } else {
-      // Create new AI response cell
-      aiCellId = crypto.randomUUID();
-      const aiCell: CellType = {
-        id: aiCellId,
+    // Save transformed cell
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
         streamId: stream.id,
         content: '',
         type: 'aiResponse',
-        sourceBinding: null,
-        order: currentCell.order + 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      // Insert AI cell after current
-      setCells(prev => {
-        const updated = [...prev];
-        updated.splice(cellIndex + 1, 0, aiCell);
-        return updated.map((c, i) => ({ ...c, order: i }));
-      });
-
-      // Save new AI cell
-      bridge.send({
-        type: 'saveCell',
-        payload: {
-          id: aiCellId,
-          streamId: stream.id,
-          content: '',
-          type: 'aiResponse',
-          order: currentCell.order + 1,
-        },
-      });
-    }
+        originalPrompt,
+        order: currentCell.order,
+      },
+    });
 
     // Start streaming
-    setStreamingCells(prev => new Map(prev).set(aiCellId, { id: aiCellId, content: '' }));
+    setStreamingCells(prev => new Map(prev).set(cellId, { id: cellId, content: '' }));
 
     // Clear any previous error
     setErrorCells(prev => {
       const updated = new Map(prev);
-      updated.delete(aiCellId);
+      updated.delete(cellId);
       return updated;
     });
 
     // Send think request with full context
-    // Include sourceCellId so Swift can generate a restatement for the user's question
-    // Strip HTML to send plain text to the AI
     bridge.send({
       type: 'think',
       payload: {
-        cellId: aiCellId,
-        sourceCellId: currentCell.id,
+        cellId,
         streamId: stream.id,
-        currentCell: stripHtml(currentCell.content),
+        currentCell: originalPrompt,
         priorCells: priorCells.map(c => ({
           ...c,
           content: stripHtml(c.content),

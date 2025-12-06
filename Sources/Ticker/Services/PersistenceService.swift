@@ -75,6 +75,12 @@ final class PersistenceService {
             }
         }
 
+        migrator.registerMigration("v3_cell_original_prompt") { db in
+            try db.alter(table: "cells") { t in
+                t.add(column: "original_prompt", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -134,12 +140,14 @@ final class PersistenceService {
                 }
 
                 let restatement: String? = row["restatement"]
+                let originalPrompt: String? = row["original_prompt"]
 
                 return Cell(
                     id: UUID(uuidString: row["id"])!,
                     streamId: UUID(uuidString: row["stream_id"])!,
                     content: row["content"],
                     restatement: restatement,
+                    originalPrompt: originalPrompt,
                     type: CellType(rawValue: row["type"]) ?? .text,
                     sourceBinding: sourceBinding,
                     order: row["position"],
@@ -200,11 +208,12 @@ final class PersistenceService {
 
             try db.execute(
                 sql: """
-                    INSERT INTO cells (id, stream_id, type, content, restatement, state, source_binding_json, metadata_json, created_at, updated_at, position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         content = excluded.content,
                         restatement = excluded.restatement,
+                        original_prompt = excluded.original_prompt,
                         type = excluded.type,
                         state = excluded.state,
                         source_binding_json = excluded.source_binding_json,
@@ -217,6 +226,7 @@ final class PersistenceService {
                     cell.type.rawValue,
                     cell.content,
                     cell.restatement,
+                    cell.originalPrompt,
                     "idle",
                     bindingJson,
                     metadataJson,
