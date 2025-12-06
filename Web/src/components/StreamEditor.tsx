@@ -210,6 +210,69 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
     });
   }, [cells, stream.id]);
 
+  // Regenerate an AI cell with a new/edited prompt
+  const handleRegenerate = useCallback((cellId: string, newPrompt: string) => {
+    const cellIndex = cells.findIndex(c => c.id === cellId);
+    const currentCell = cells[cellIndex];
+    if (!currentCell || currentCell.type !== 'aiResponse') return;
+
+    // Gather prior cells for context (exclude current cell)
+    const priorCells = cells.slice(0, cellIndex).map(c => ({
+      id: c.id,
+      content: c.content,
+      type: c.type,
+    }));
+
+    // Update the cell with new prompt and clear content
+    setCells(prev => prev.map(c =>
+      c.id === cellId
+        ? {
+            ...c,
+            originalPrompt: newPrompt,
+            content: '',
+            updatedAt: new Date().toISOString(),
+          }
+        : c
+    ));
+
+    // Save updated cell
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
+        streamId: stream.id,
+        content: '',
+        type: 'aiResponse',
+        originalPrompt: newPrompt,
+        order: currentCell.order,
+      },
+    });
+
+    // Start streaming
+    setStreamingCells(prev => new Map(prev).set(cellId, { id: cellId, content: '' }));
+
+    // Clear any previous error
+    setErrorCells(prev => {
+      const updated = new Map(prev);
+      updated.delete(cellId);
+      return updated;
+    });
+
+    // Send think request
+    bridge.send({
+      type: 'think',
+      payload: {
+        cellId,
+        streamId: stream.id,
+        currentCell: newPrompt,
+        priorCells: priorCells.map(c => ({
+          ...c,
+          content: stripHtml(c.content),
+        })),
+      },
+    });
+  }, [cells, stream.id]);
+
   const handleCellDelete = useCallback((cellId: string) => {
     const index = cells.findIndex(c => c.id === cellId);
     if (index === -1) return;
@@ -384,6 +447,7 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
                   onDelete={() => handleCellDelete(cell.id)}
                   onEnter={() => handleCreateCell(index)}
                   onThink={() => handleThink(cell.id)}
+                  onRegenerate={(newPrompt) => handleRegenerate(cell.id, newPrompt)}
                   onFocusPrevious={() => handleFocusPrevious(index)}
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}

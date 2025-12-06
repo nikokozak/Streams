@@ -12,6 +12,7 @@ interface CellProps {
   onDelete: () => void;
   onEnter: () => void;
   onThink: () => void;
+  onRegenerate?: (newPrompt: string) => void;
   onFocusPrevious: () => void;
   onFocusNext: () => void;
   registerFocus: (focus: () => void) => void;
@@ -27,14 +28,18 @@ export function Cell({
   onDelete,
   onEnter,
   onThink,
+  onRegenerate,
   onFocusPrevious,
   onFocusNext,
   registerFocus,
 }: CellProps) {
   const [localContent, setLocalContent] = useState(cell.content);
   const [isFocused, setIsFocused] = useState(false);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [editedPrompt, setEditedPrompt] = useState(cell.originalPrompt || '');
   const saveTimeoutRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const promptInputRef = useRef<HTMLInputElement>(null);
 
   // Does this cell have a restatement (dual-representation)?
   const hasRestatement = Boolean(cell.restatement) && cell.type === 'text';
@@ -144,6 +149,30 @@ export function Cell({
     }
   }, [cell.content, isStreaming]);
 
+  // Sync edited prompt with cell prop
+  useEffect(() => {
+    setEditedPrompt(cell.originalPrompt || '');
+  }, [cell.originalPrompt]);
+
+  // Handle regenerate
+  const handleRegenerate = () => {
+    if (editedPrompt.trim() && onRegenerate) {
+      setIsDrawerOpen(false);
+      onRegenerate(editedPrompt.trim());
+    }
+  };
+
+  // Handle prompt input key down
+  const handlePromptKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleRegenerate();
+    } else if (e.key === 'Escape') {
+      setIsDrawerOpen(false);
+      setEditedPrompt(cell.originalPrompt || '');
+    }
+  };
+
   const cellTypeClass = cell.type === 'aiResponse'
     ? 'cell--ai'
     : cell.type === 'quote'
@@ -156,19 +185,55 @@ export function Cell({
   // Show restatement view when: has restatement, not focused, not new
   const showRestatementView = hasRestatement && !isFocused && !isNew;
 
-  // Tooltip for AI cells with original prompt
-  const tooltipText = cell.type === 'aiResponse' && cell.originalPrompt
-    ? `Asked: ${cell.originalPrompt}`
-    : undefined;
+  // Does this AI cell have an original prompt?
+  const hasOriginalPrompt = cell.type === 'aiResponse' && Boolean(cell.originalPrompt);
 
   return (
     <div
       ref={containerRef}
-      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''}`}
-      title={tooltipText}
+      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isDrawerOpen ? 'cell--drawer-open' : ''}`}
       onBlur={handleBlur}
       onFocus={handleFocus}
     >
+      {/* Prompt drawer for AI cells */}
+      {hasOriginalPrompt && (
+        <div className="cell-prompt-header">
+          <button
+            className="cell-prompt-toggle"
+            onClick={() => {
+              setIsDrawerOpen(!isDrawerOpen);
+              if (!isDrawerOpen) {
+                setTimeout(() => promptInputRef.current?.focus(), 0);
+              }
+            }}
+          >
+            <span className="cell-prompt-arrow">{isDrawerOpen ? '▾' : '▸'}</span>
+            <span className="cell-prompt-label">Asked</span>
+          </button>
+          {isDrawerOpen && (
+            <div className="cell-prompt-drawer">
+              <input
+                ref={promptInputRef}
+                type="text"
+                className="cell-prompt-input"
+                value={editedPrompt}
+                onChange={(e) => setEditedPrompt(e.target.value)}
+                onKeyDown={handlePromptKeyDown}
+                placeholder="Edit your question..."
+              />
+              <button
+                className="cell-prompt-regenerate"
+                onClick={handleRegenerate}
+                disabled={!editedPrompt.trim() || isStreaming}
+                title="Regenerate response"
+              >
+                ↻
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {error ? (
         <div className="cell-error-message">{error}</div>
       ) : showRestatementView ? (
