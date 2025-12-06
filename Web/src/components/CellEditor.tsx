@@ -1,7 +1,7 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { useEffect, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 
 interface CellEditorProps {
   content: string;
@@ -26,6 +26,9 @@ export function CellEditor({
   onArrowUp,
   onArrowDown,
 }: CellEditorProps) {
+  // Track if change originated from user typing (to avoid cursor reset)
+  const isLocalChange = useRef(false);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -102,20 +105,23 @@ export function CellEditor({
       },
     },
     onUpdate: ({ editor }) => {
+      isLocalChange.current = true;
       onChange(editor.getHTML());
     },
   });
 
-  // Update content when prop changes
+  // Update content when prop changes (from external source, not user typing)
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
-      editor.commands.setContent(content);
+      if (isLocalChange.current) {
+        // Change came from user typing, don't reset cursor
+        isLocalChange.current = false;
+      } else {
+        // Change came from outside (e.g., streaming), update content
+        editor.commands.setContent(content);
+      }
     }
   }, [content, editor]);
-
-  const focus = useCallback(() => {
-    editor?.commands.focus('end');
-  }, [editor]);
 
   // Expose focus method
   useEffect(() => {
@@ -125,7 +131,7 @@ export function CellEditor({
   }, [autoFocus, editor]);
 
   return (
-    <div className="cell-editor" onClick={focus}>
+    <div className="cell-editor">
       <EditorContent editor={editor} />
     </div>
   );
