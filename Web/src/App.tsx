@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
 import { Settings } from './components/Settings';
+import { useBlockStore } from './store/blockStore';
 
 type View = 'list' | 'stream' | 'settings';
 
@@ -11,6 +12,7 @@ export function App() {
   const [currentStream, setCurrentStream] = useState<Stream | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingStream, setIsLoadingStream] = useState(false);
+  const clearStream = useBlockStore((state) => state.clearStream);
 
   useEffect(() => {
     // Subscribe to bridge messages
@@ -46,6 +48,7 @@ export function App() {
   };
 
   const handleBackToList = () => {
+    clearStream();
     setCurrentStream(null);
     setView('list');
     bridge.send({ type: 'loadStreams' });
@@ -54,6 +57,7 @@ export function App() {
   const handleDeleteStream = () => {
     if (currentStream) {
       bridge.send({ type: 'deleteStream', payload: { id: currentStream.id } });
+      clearStream();
       setCurrentStream(null);
       setView('list');
     }
