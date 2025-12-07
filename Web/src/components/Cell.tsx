@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Cell as CellType } from '../types';
 import { CellEditor } from './CellEditor';
 import { ModifierMenu } from './ModifierMenu';
+import { useBlockStore } from '../store/blockStore';
 
 interface CellProps {
   cell: CellType;
@@ -105,9 +106,10 @@ export function Cell({
     }
   };
 
-  // Handle focus
+  // Handle focus - also update blockStore
   const handleFocus = () => {
     setIsFocused(true);
+    useBlockStore.getState().setFocus(cell.id);
   };
 
   // Handle blur - save and prune if empty
@@ -118,6 +120,7 @@ export function Cell({
     }
 
     setIsFocused(false);
+    useBlockStore.getState().setFocus(null);
     saveNow();
 
     // Auto-prune empty cells (unless it's the only cell or an AI cell)

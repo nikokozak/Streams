@@ -1,5 +1,6 @@
 import { useState, useRef, ReactNode } from 'react';
 import { useBlockStore } from '../store/blockStore';
+import { bridge } from '../types';
 
 interface BlockWrapperProps {
   id: string;
@@ -50,6 +51,19 @@ export function BlockWrapper({
       const toIdx = store.getBlockIndex(id);
       if (fromIdx !== -1 && toIdx !== -1) {
         store.reorderBlocks(fromIdx, toIdx);
+
+        // Persist new order to database
+        const { streamId, blockOrder } = useBlockStore.getState();
+        if (streamId) {
+          const orders = blockOrder.map((blockId, idx) => ({
+            id: blockId,
+            order: idx,
+          }));
+          bridge.send({
+            type: 'reorderBlocks',
+            payload: { streamId, orders },
+          });
+        }
       }
     }
   };

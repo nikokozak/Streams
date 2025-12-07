@@ -14,6 +14,13 @@ final class RAGMigrationService {
     /// Process all sources that don't have embeddings
     /// Should be called on app launch after a delay
     func migrateExistingSources() async {
+        // Check if embedding service is configured before querying
+        // This prevents infinite retry when no OpenAI key is set
+        guard sourceService.isEmbeddingConfigured else {
+            print("RAGMigration: Embedding service not configured, skipping migration")
+            return
+        }
+
         do {
             let sources = try persistence.loadSourcesNeedingEmbedding()
 

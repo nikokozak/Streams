@@ -7,6 +7,9 @@ interface SettingsData {
   hasPerplexityKey: boolean;
   perplexityKeyPreview?: string;
   smartRoutingEnabled: boolean;
+  classifierReady?: boolean;
+  classifierLoading?: boolean;
+  classifierError?: string;
 }
 
 interface SettingsProps {
@@ -144,7 +147,10 @@ export function Settings({ onClose }: SettingsProps) {
         <section className="settings-section">
           <h2>AI Routing</h2>
           <div className="settings-field">
-            <label className="settings-toggle-label">
+            <label
+              className="settings-toggle-label"
+              title={!settings?.hasPerplexityKey ? 'Requires Perplexity API key' : undefined}
+            >
               <input
                 type="checkbox"
                 checked={settings?.smartRoutingEnabled ?? false}
@@ -163,6 +169,17 @@ export function Settings({ onClose }: SettingsProps) {
                 ? 'When enabled, a local AI model analyzes your query to route it optimally: current events and real-time data go to Perplexity search, while knowledge questions go to GPT.'
                 : 'Requires Perplexity API key. When enabled, queries are automatically routed to the best AI backend.'}
             </p>
+            {settings?.smartRoutingEnabled && settings?.hasPerplexityKey && (
+              <p className="settings-classifier-status">
+                {settings.classifierError ? (
+                  <span className="classifier-error">Classifier failed: {settings.classifierError}</span>
+                ) : settings.classifierLoading && !settings.classifierReady ? (
+                  <span className="classifier-loading">Loading local classifier...</span>
+                ) : settings.classifierReady ? (
+                  <span className="classifier-ready">Local classifier ready</span>
+                ) : null}
+              </p>
+            )}
           </div>
         </section>
 

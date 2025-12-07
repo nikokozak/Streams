@@ -40,22 +40,65 @@ export function useBlockFocus(options: UseBlockFocusOptions = {}) {
   }, []);
 
   // Handle keyboard navigation
+  // Works in two modes:
+  // 1. Global navigation: When no cell is focused, arrow keys navigate between blocks
+  // 2. Shift+Arrow: Even when a cell is focused, Shift+Arrow moves to adjacent block
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       const focusedId = store.focusedBlockId;
-      if (!focusedId) return;
+      const blocks = store.getBlocksArray();
+      if (blocks.length === 0) return;
+
+      // Global navigation mode: no cell is focused
+      if (!focusedId) {
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          // Focus the last block
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock) {
+            store.setFocus(lastBlock.id);
+          }
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          // Focus the first block
+          const firstBlock = blocks[0];
+          if (firstBlock) {
+            store.setFocus(firstBlock.id);
+          }
+          return;
+        }
+        return;
+      }
 
       const cursor = getCursorPosition();
 
-      // Arrow Up at start of block -> focus previous
-      if (e.key === 'ArrowUp' && cursor?.isAtStart && !e.shiftKey) {
+      // Shift+Arrow: navigate between blocks regardless of cursor position
+      if (e.shiftKey) {
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          store.focusPrevious();
+          onFocusPrevious?.(focusedId);
+          return;
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          store.focusNext();
+          onFocusNext?.(focusedId);
+          return;
+        }
+      }
+
+      // Standard navigation: Arrow Up at start of block -> focus previous
+      if (e.key === 'ArrowUp' && cursor?.isAtStart) {
         e.preventDefault();
         store.focusPrevious();
         onFocusPrevious?.(focusedId);
       }
 
-      // Arrow Down at end of block -> focus next
-      if (e.key === 'ArrowDown' && cursor?.isAtEnd && !e.shiftKey) {
+      // Standard navigation: Arrow Down at end of block -> focus next
+      if (e.key === 'ArrowDown' && cursor?.isAtEnd) {
         e.preventDefault();
         store.focusNext();
         onFocusNext?.(focusedId);
@@ -71,7 +114,6 @@ export function useBlockFocus(options: UseBlockFocusOptions = {}) {
           !block?.content || block.content.replace(/<[^>]*>/g, '').trim() === '';
 
         if (isContentEmpty) {
-          const blocks = store.getBlocksArray();
           // Don't delete if it's the only block
           if (blocks.length > 1) {
             e.preventDefault();

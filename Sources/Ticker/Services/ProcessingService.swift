@@ -55,6 +55,7 @@ final class ProcessingService {
                     await self.refreshBlock(
                         block,
                         in: stream,
+                        streamId: stream.id,
                         onStart: onBlockRefreshStart,
                         onChunk: onBlockChunk,
                         onComplete: onBlockRefreshComplete,
@@ -95,6 +96,7 @@ final class ProcessingService {
             await refreshBlock(
                 block,
                 in: stream,
+                streamId: stream.id,
                 onStart: onBlockRefreshStart,
                 onChunk: onBlockChunk,
                 onComplete: onBlockRefreshComplete,
@@ -109,6 +111,7 @@ final class ProcessingService {
     private func refreshBlock(
         _ block: Cell,
         in stream: Stream,
+        streamId: UUID,
         onStart: @escaping (UUID) -> Void,
         onChunk: @escaping (UUID, String) -> Void,
         onComplete: @escaping (UUID, String) -> Void,
@@ -142,6 +145,7 @@ final class ProcessingService {
 
         await orchestrator.route(
             query: prompt,
+            streamId: streamId,
             priorCells: priorCells,
             sourceContext: context,
             onChunk: { chunk in

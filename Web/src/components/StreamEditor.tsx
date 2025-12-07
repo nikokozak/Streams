@@ -125,6 +125,13 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         store.completeStreaming(cellId);
       }
 
+      // Restatement updates (heading form of original prompt)
+      if (message.type === 'restatementGenerated' && message.payload?.cellId && message.payload?.restatement) {
+        const cellId = message.payload.cellId as string;
+        const restatement = message.payload.restatement as string;
+        store.updateBlock(cellId, { restatement });
+      }
+
       // Modifier streaming updates
       if (message.type === 'modifierCreated' && message.payload?.cellId && message.payload?.modifier) {
         const cellId = message.payload.cellId as string;

@@ -44,7 +44,7 @@ final class PersistenceService {
                 t.column("display_name", .text).notNull()
                 t.column("file_type", .text).notNull()
                 t.column("bookmark_data", .blob).notNull()
-                t.column("status", .text).notNull().defaults(to: "available")
+                t.column("status", .text).notNull().defaults(to: "pending")
                 t.column("extracted_text", .text)
                 t.column("page_count", .integer)
                 t.column("added_at", .double).notNull()
@@ -97,7 +97,12 @@ final class PersistenceService {
             }
         }
 
-        migrator.registerMigration("v6_rag_pipeline") { db in
+        // Fix invalid "available" status from v1_initial migration
+        migrator.registerMigration("v6_fix_source_status") { db in
+            try db.execute(sql: "UPDATE sources SET status = 'ready' WHERE status = 'available'")
+        }
+
+        migrator.registerMigration("v7_rag_pipeline") { db in
             // Source chunks table - stores text segments with metadata
             try db.create(table: "source_chunks") { t in
                 t.column("id", .text).primaryKey()
@@ -387,6 +392,34 @@ final class PersistenceService {
     func deleteCell(id: UUID) throws {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM cells WHERE id = ?", arguments: [id.uuidString])
+        }
+    }
+
+    /// Update cell positions in bulk (for drag/drop reordering)
+    func updateCellOrders(_ orders: [(id: UUID, order: Int)], streamId: UUID) throws {
+        let now = Date().timeIntervalSince1970
+        try dbQueue.write { db in
+            for (id, order) in orders {
+                try db.execute(
+                    sql: "UPDATE cells SET position = ?, updated_at = ? WHERE id = ?",
+                    arguments: [order, now, id.uuidString]
+                )
+            }
+            // Also update stream's updated_at
+            try db.execute(
+                sql: "UPDATE streams SET updated_at = ? WHERE id = ?",
+                arguments: [now, streamId.uuidString]
+            )
+        }
+    }
+
+    /// Update a cell's restatement
+    func updateCellRestatement(cellId: UUID, restatement: String) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE cells SET restatement = ?, updated_at = ? WHERE id = ?",
+                arguments: [restatement, Date().timeIntervalSince1970, cellId.uuidString]
+            )
         }
     }
 

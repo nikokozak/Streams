@@ -1,5 +1,7 @@
 import Foundation
 import PDFKit
+import Vision
+import AppKit
 
 /// Manages file sources: bookmarks, access, text extraction, and RAG processing
 final class SourceService {
@@ -15,6 +17,11 @@ final class SourceService {
         self.persistence = persistence
         self.chunkingService = chunkingService
         self.embeddingService = embeddingService
+    }
+
+    /// Check if embedding service is configured (has OpenAI API key)
+    var isEmbeddingConfigured: Bool {
+        embeddingService.isConfigured
     }
 
     // MARK: - Bookmark Creation
@@ -114,8 +121,7 @@ final class SourceService {
             let text = try String(contentsOf: url, encoding: .utf8)
             return (text, nil)
         case .image:
-            // Images don't have extractable text (could add OCR later)
-            return ("", nil)
+            return try extractImageText(from: url)
         }
     }
 
@@ -138,6 +144,30 @@ final class SourceService {
         }
 
         return (text, pageCount)
+    }
+
+    private func extractImageText(from url: URL) throws -> (text: String, pageCount: Int?) {
+        guard let image = NSImage(contentsOf: url),
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            throw SourceError.extractionFailed("Could not load image")
+        }
+
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+
+        guard let observations = request.results else {
+            return ("", 1)
+        }
+
+        let text = observations
+            .compactMap { $0.topCandidates(1).first?.string }
+            .joined(separator: "\n")
+
+        return (text, 1)
     }
 
     // MARK: - Full Processing
@@ -182,6 +212,8 @@ final class SourceService {
 
         guard embeddingService.isConfigured else {
             print("RAG: Embedding service not configured, skipping \(source.displayName)")
+            // Mark as unconfigured so UI can explain why indexing didn't run
+            try? persistence.updateSourceEmbeddingStatus(source.id, status: "unconfigured")
             return
         }
 

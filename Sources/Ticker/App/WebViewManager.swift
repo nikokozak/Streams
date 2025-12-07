@@ -108,8 +108,18 @@ final class WebViewManager: NSObject {
         }
     }
 
-    /// Load the MLX classifier in the background
+    /// Load the MLX classifier in the background (only if smart routing enabled and Perplexity configured)
     private func loadMLXClassifier() {
+        // Only load classifier if smart routing is enabled and Perplexity is configured
+        guard SettingsService.shared.smartRoutingEnabled else {
+            print("MLX classifier skipped: smart routing disabled")
+            return
+        }
+        guard let perplexityKey = SettingsService.shared.perplexityAPIKey, !perplexityKey.isEmpty else {
+            print("MLX classifier skipped: Perplexity API key not configured")
+            return
+        }
+
         Task {
             let classifier = MLXClassifier()
             self.mlxClassifier = classifier  // Store immediately so loading state is visible
@@ -392,6 +402,27 @@ final class WebViewManager: NSObject {
                 print("Failed to delete cell: \(error)")
             }
 
+        case "reorderBlocks":
+            guard let payload = message.payload,
+                  let streamIdValue = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdValue),
+                  let ordersRaw = payload["orders"]?.value as? [[String: Any]] else {
+                print("Invalid reorderBlocks payload")
+                return
+            }
+            do {
+                let orders = ordersRaw.compactMap { dict -> (UUID, Int)? in
+                    guard let idStr = dict["id"] as? String,
+                          let id = UUID(uuidString: idStr),
+                          let order = dict["order"] as? Int else { return nil }
+                    return (id, order)
+                }
+                try persistence.updateCellOrders(orders, streamId: streamId)
+                bridgeService.send(BridgeMessage(type: "blocksReordered", payload: [:]))
+            } catch {
+                print("Failed to reorder blocks: \(error)")
+            }
+
         case "addSource":
             guard let payload = message.payload,
                   let streamIdValue = payload["streamId"]?.value as? String,
@@ -407,7 +438,9 @@ final class WebViewManager: NSObject {
                 panel.canChooseFiles = true
                 panel.canChooseDirectories = false
                 panel.allowsMultipleSelection = false
-                panel.allowedContentTypes = [.pdf, .plainText, .text]
+                // Note: "net.daringfireball.markdown" is the standard UTI for markdown files
+                let markdownType = UTType(filenameExtension: "md") ?? UTType.plainText
+                panel.allowedContentTypes = [.pdf, .plainText, .text, .sourceCode, markdownType, .png, .jpeg, .heic, .image]
                 panel.message = "Select a file to attach"
 
                 if panel.runModal() == .OK, let url = panel.url {
@@ -435,6 +468,10 @@ final class WebViewManager: NSObject {
                 bridgeService.send(BridgeMessage(type: "sourceRemoved", payload: ["id": AnyCodable(id.uuidString)]))
             } catch {
                 print("Failed to remove source: \(error)")
+                bridgeService.send(BridgeMessage(type: "sourceRemoveError", payload: [
+                    "id": AnyCodable(id.uuidString),
+                    "error": AnyCodable(error.localizedDescription)
+                ]))
             }
 
         case "think":
@@ -519,6 +556,30 @@ final class WebViewManager: NSObject {
                     onComplete: onComplete,
                     onError: onError
                 )
+            }
+
+            // Generate restatement asynchronously (don't block the AI response)
+            aiService.generateRestatement(for: currentCell) { [weak self] restatement in
+                guard let self, let restatement else { return }
+
+                // Send restatement to frontend
+                self.bridgeService.send(BridgeMessage(
+                    type: "restatementGenerated",
+                    payload: [
+                        "cellId": AnyCodable(cellId),
+                        "restatement": AnyCodable(restatement)
+                    ]
+                ))
+
+                // Also persist to database if we have a stream ID and persistence
+                if let persistence = self.persistence,
+                   let cellUUID = UUID(uuidString: cellId) {
+                    do {
+                        try persistence.updateCellRestatement(cellId: cellUUID, restatement: restatement)
+                    } catch {
+                        print("Failed to save restatement: \(error)")
+                    }
+                }
             }
 
         case "applyModifier":
@@ -744,6 +805,21 @@ final class WebViewManager: NSObject {
                 if let blockName = cell.blockName {
                     dict["blockName"] = blockName
                 }
+                // Source binding
+                if let sourceBinding = cell.sourceBinding {
+                    var bindingDict: [String: Any] = ["sourceId": sourceBinding.sourceId.uuidString]
+                    switch sourceBinding.location {
+                    case .whole:
+                        bindingDict["location"] = ["type": "whole"]
+                    case .page(let page):
+                        bindingDict["location"] = ["type": "page", "page": page]
+                    case .pageRange(let start, let end):
+                        bindingDict["location"] = ["type": "pageRange", "startPage": start, "endPage": end]
+                    }
+                    dict["sourceBinding"] = bindingDict
+                } else {
+                    dict["sourceBinding"] = NSNull()
+                }
                 return dict
             },
             "createdAt": formatter.string(from: stream.createdAt),
@@ -864,6 +940,34 @@ final class WebViewManager: NSObject {
 
         let blockName = payload["blockName"]?.value as? String
 
+        // Decode source binding
+        var sourceBinding: SourceBinding? = nil
+        if let bindingRaw = payload["sourceBinding"]?.value as? [String: Any],
+           let sourceIdStr = bindingRaw["sourceId"] as? String,
+           let sourceId = UUID(uuidString: sourceIdStr),
+           let locationRaw = bindingRaw["location"] as? [String: Any],
+           let locationType = locationRaw["type"] as? String {
+            let location: SourceLocation
+            switch locationType {
+            case "page":
+                if let page = locationRaw["page"] as? Int {
+                    location = .page(page)
+                } else {
+                    location = .whole
+                }
+            case "pageRange":
+                if let start = locationRaw["startPage"] as? Int,
+                   let end = locationRaw["endPage"] as? Int {
+                    location = .pageRange(start, end)
+                } else {
+                    location = .whole
+                }
+            default:
+                location = .whole
+            }
+            sourceBinding = SourceBinding(sourceId: sourceId, location: location)
+        }
+
         return Cell(
             id: id,
             streamId: streamId,
@@ -871,6 +975,7 @@ final class WebViewManager: NSObject {
             restatement: restatement,
             originalPrompt: originalPrompt,
             type: type,
+            sourceBinding: sourceBinding,
             order: order,
             modifiers: modifiers,
             versions: versions,

@@ -1234,6 +1234,15 @@ body {
   50% { opacity: 0.6; }
 }
 
+.source-error {
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin: var(--spacing-sm);
+  background: rgba(220, 38, 38, 0.1);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  border-radius: var(--radius-sm);
+}
+
 .source-remove {
   opacity: 0;
   background: transparent;
@@ -1453,6 +1462,23 @@ body {
   color: var(--color-text-tertiary);
   margin: 0;
   line-height: var(--line-height-relaxed);
+}
+
+.settings-classifier-status {
+  font-size: var(--font-size-sm);
+  margin: var(--spacing-xs) 0 0;
+}
+
+.classifier-ready {
+  color: var(--color-success, #22c55e);
+}
+
+.classifier-loading {
+  color: var(--color-text-tertiary);
+}
+
+.classifier-error {
+  color: var(--color-error, #ef4444);
 }
 
 .settings-toggle-label {

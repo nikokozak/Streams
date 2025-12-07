@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { SourceReference, bridge } from '../types';
 
 interface SourcePanelProps {
@@ -14,15 +14,46 @@ export function SourcePanel({
   onSourceRemoved,
 }: SourcePanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
 
   const handleAddSource = () => {
+    setError(null);
     bridge.send({ type: 'addSource', payload: { streamId } });
   };
 
   const handleRemoveSource = (id: string) => {
+    setError(null);
+    setPendingRemoval(id);
     bridge.send({ type: 'removeSource', payload: { id } });
-    onSourceRemoved(id);
   };
+
+  // Clear error after a few seconds
+  const showError = (message: string) => {
+    setError(message);
+    setTimeout(() => setError(null), 5000);
+  };
+
+  // Listen for source events from bridge
+  useEffect(() => {
+    const unsubscribe = bridge.onMessage((message) => {
+      if (message.type === 'sourceError' && message.payload?.error) {
+        showError(message.payload.error as string);
+      }
+      // Handle successful removal confirmation
+      if (message.type === 'sourceRemoved' && message.payload?.id) {
+        const removedId = message.payload.id as string;
+        setPendingRemoval(null);
+        onSourceRemoved(removedId);
+      }
+      // Handle removal failure
+      if (message.type === 'sourceRemoveError' && message.payload?.error) {
+        setPendingRemoval(null);
+        showError(message.payload.error as string);
+      }
+    });
+    return unsubscribe;
+  }, [onSourceRemoved]);
 
   return (
     <div className={`source-panel ${isCollapsed ? 'source-panel--collapsed' : ''}`}>
@@ -44,6 +75,10 @@ export function SourcePanel({
         )}
       </div>
 
+      {error && (
+        <div className="source-error">{error}</div>
+      )}
+
       {!isCollapsed && (
         <div className="source-list">
           {sources.length === 0 ? (
@@ -53,6 +88,7 @@ export function SourcePanel({
               <SourceItem
                 key={source.id}
                 source={source}
+                isRemoving={pendingRemoval === source.id}
                 onRemove={() => handleRemoveSource(source.id)}
               />
             ))
@@ -65,16 +101,17 @@ export function SourcePanel({
 
 interface SourceItemProps {
   source: SourceReference;
+  isRemoving: boolean;
   onRemove: () => void;
 }
 
-function SourceItem({ source, onRemove }: SourceItemProps) {
+function SourceItem({ source, isRemoving, onRemove }: SourceItemProps) {
   const icon = getFileIcon(source.fileType);
   const statusClass = `source-status--${source.status}`;
   const embeddingInfo = getEmbeddingInfo(source.embeddingStatus);
 
   return (
-    <div className={`source-item ${statusClass}`}>
+    <div className={`source-item ${statusClass} ${isRemoving ? 'source-item--removing' : ''}`}>
       <span className="source-icon">{icon}</span>
       <div className="source-info">
         <span className="source-name">{source.displayName}</span>
@@ -99,8 +136,9 @@ function SourceItem({ source, onRemove }: SourceItemProps) {
           onRemove();
         }}
         title="Remove source"
+        disabled={isRemoving}
       >
-        ×
+        {isRemoving ? '…' : '×'}
       </button>
     </div>
   );
@@ -114,6 +152,8 @@ function getEmbeddingInfo(status: string): { label: string; tooltip: string } | 
       return { label: 'Indexed', tooltip: 'Ready for semantic search' };
     case 'failed':
       return { label: 'Index failed', tooltip: 'Semantic indexing failed - full text will be used' };
+    case 'unconfigured':
+      return { label: 'Not indexed', tooltip: 'Add OpenAI API key in Settings to enable semantic search' };
     case 'none':
     default:
       return null;
