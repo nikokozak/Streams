@@ -70,16 +70,24 @@ final class WebViewManager: NSObject {
     /// Load the MLX classifier in the background
     private func loadMLXClassifier() {
         Task {
+            let classifier = MLXClassifier()
+            self.mlxClassifier = classifier  // Store immediately so loading state is visible
+
             do {
-                let classifier = MLXClassifier()
                 try await classifier.prepare()
-                self.mlxClassifier = classifier
                 orchestrator.setClassifier(classifier)
                 print("MLX classifier loaded and ready")
             } catch {
                 print("Failed to load MLX classifier: \(error)")
                 // App continues to work, just uses direct GPT calls
             }
+
+            // Notify frontend of classifier state change
+            let settings = settingsWithClassifierState()
+            bridgeService.send(BridgeMessage(
+                type: "settingsLoaded",
+                payload: ["settings": AnyCodable(settings)]
+            ))
         }
     }
 
@@ -558,7 +566,7 @@ final class WebViewManager: NSObject {
             break
 
         case "loadSettings":
-            let settings = SettingsService.shared.allSettings()
+            let settings = settingsWithClassifierState()
             bridgeService.send(BridgeMessage(
                 type: "settingsLoaded",
                 payload: ["settings": AnyCodable(settings)]
@@ -586,7 +594,7 @@ final class WebViewManager: NSObject {
             }
 
             // Send back updated settings
-            let settings = SettingsService.shared.allSettings()
+            let settings = settingsWithClassifierState()
             bridgeService.send(BridgeMessage(
                 type: "settingsLoaded",
                 payload: ["settings": AnyCodable(settings)]
@@ -716,6 +724,22 @@ final class WebViewManager: NSObject {
     /// Generate a short label for a modifier prompt using AI
     private func generateModifierLabel(prompt: String) async throws -> String {
         return try await aiService.generateLabel(for: prompt)
+    }
+
+    /// Get settings enriched with classifier state
+    private func settingsWithClassifierState() -> [String: Any] {
+        var settings = SettingsService.shared.allSettings()
+        if let classifier = mlxClassifier {
+            settings["classifierReady"] = classifier.isReady
+            settings["classifierLoading"] = classifier.isLoading
+            if let error = classifier.loadError {
+                settings["classifierError"] = error.localizedDescription
+            }
+        } else {
+            settings["classifierReady"] = false
+            settings["classifierLoading"] = true  // Still loading
+        }
+        return settings
     }
 
     private func decodeCell(from payload: [String: AnyCodable]) throws -> Cell {

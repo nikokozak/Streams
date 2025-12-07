@@ -45,6 +45,12 @@ protocol QueryClassifier {
     /// Whether the classifier is ready to use
     var isReady: Bool { get }
 
+    /// Whether the classifier is currently loading
+    var isLoading: Bool { get }
+
+    /// Any error that occurred during loading
+    var loadError: Error? { get }
+
     /// Load/initialize the classifier if needed
     func prepare() async throws
 }

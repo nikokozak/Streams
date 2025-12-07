@@ -64,13 +64,13 @@ final class AIOrchestrator {
             return
         }
 
-        // Build request
+        // Build request and truncate to token budget
         let request = buildRequest(
             for: intent,
             query: query,
             priorCells: priorCells,
             sourceContext: sourceContext
-        )
+        ).truncated()
 
         // Stream the response
         await provider.stream(
@@ -116,11 +116,16 @@ final class AIOrchestrator {
             if let perplexity = providers["perplexity"], perplexity.isConfigured {
                 return perplexity
             }
-            return providers["openai"]
+            // Fall through to check OpenAI
+            fallthrough
 
         case .knowledge, .expand, .summarize, .rewrite, .extract, .ambiguous:
-            // Use OpenAI for knowledge-based tasks
-            return providers["openai"]
+            // Use OpenAI for knowledge-based tasks (if configured)
+            if let openai = providers["openai"], openai.isConfigured {
+                return openai
+            }
+            // Last resort: return any configured provider
+            return configuredProviders.first
         }
     }
 

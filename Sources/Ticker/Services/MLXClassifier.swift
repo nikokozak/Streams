@@ -6,8 +6,11 @@ import MLXLMCommon
 final class MLXClassifier: QueryClassifier {
     private var container: ModelContainer?
     private let modelId = "mlx-community/Qwen2.5-0.5B-Instruct-4bit"
-    private var isLoading = false
-    private var loadError: Error?
+
+    // MARK: - QueryClassifier State
+
+    private(set) var isLoading = false
+    private(set) var loadError: Error?
 
     var isReady: Bool {
         container != nil

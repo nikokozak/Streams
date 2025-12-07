@@ -109,6 +109,12 @@ final class AIService: LLMProvider {
         request.httpBody = bodyData
 
         URLSession.shared.dataTask(with: request) { data, response, error in
+            // Validate HTTP status code
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode != 200 {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+
             guard let data,
                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let choices = json["choices"] as? [[String: Any]],
@@ -291,6 +297,7 @@ private class StreamingDelegate: NSObject, URLSessionDataDelegate {
     private let onComplete: () -> Void
     private let onError: (Error) -> Void
     private var buffer = ""
+    private var hasCompleted = false  // Prevent duplicate completion calls
 
     init(
         onChunk: @escaping (String) -> Void,
@@ -300,6 +307,18 @@ private class StreamingDelegate: NSObject, URLSessionDataDelegate {
         self.onChunk = onChunk
         self.onComplete = onComplete
         self.onError = onError
+    }
+
+    private func complete() {
+        guard !hasCompleted else { return }
+        hasCompleted = true
+        onComplete()
+    }
+
+    private func fail(_ error: Error) {
+        guard !hasCompleted else { return }
+        hasCompleted = true
+        onError(error)
     }
 
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
@@ -314,7 +333,7 @@ private class StreamingDelegate: NSObject, URLSessionDataDelegate {
             if line.hasPrefix("data: ") {
                 let jsonString = String(line.dropFirst(6))
                 if jsonString == "[DONE]" {
-                    onComplete()
+                    complete()
                     return
                 }
 
@@ -331,9 +350,9 @@ private class StreamingDelegate: NSObject, URLSessionDataDelegate {
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error {
-            onError(error)
+            fail(error)
         } else {
-            onComplete()
+            complete()
         }
     }
 
