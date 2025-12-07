@@ -72,6 +72,7 @@ export interface SourceReference {
   displayName: string;
   fileType: SourceFileType;
   status: SourceStatus;
+  embeddingStatus: SourceEmbeddingStatus;
   extractedText: string | null;
   pageCount: number | null;
   addedAt: string;
@@ -82,6 +83,9 @@ export type SourceFileType = 'pdf' | 'text' | 'markdown' | 'image';
 
 /** Status of a source reference */
 export type SourceStatus = 'pending' | 'ready' | 'stale' | 'error';
+
+/** Status of RAG embedding for a source */
+export type SourceEmbeddingStatus = 'none' | 'processing' | 'complete' | 'failed';
 
 /** Links a cell to a specific location in a source file */
 export interface SourceBinding {

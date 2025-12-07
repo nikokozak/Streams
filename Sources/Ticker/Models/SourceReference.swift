@@ -10,6 +10,7 @@ struct SourceReference: Identifiable, Codable {
     var status: SourceStatus
     var extractedText: String?
     var pageCount: Int?
+    var embeddingStatus: SourceEmbeddingStatus
     let addedAt: Date
 
     init(
@@ -21,6 +22,7 @@ struct SourceReference: Identifiable, Codable {
         status: SourceStatus = .pending,
         extractedText: String? = nil,
         pageCount: Int? = nil,
+        embeddingStatus: SourceEmbeddingStatus = .none,
         addedAt: Date = Date()
     ) {
         self.id = id
@@ -31,8 +33,17 @@ struct SourceReference: Identifiable, Codable {
         self.status = status
         self.extractedText = extractedText
         self.pageCount = pageCount
+        self.embeddingStatus = embeddingStatus
         self.addedAt = addedAt
     }
+}
+
+/// Status of RAG embedding for a source
+enum SourceEmbeddingStatus: String, Codable {
+    case none        // Not yet processed for RAG
+    case processing  // Currently chunking/embedding
+    case complete    // All chunks embedded
+    case failed      // Embedding failed
 }
 
 /// Supported source file types

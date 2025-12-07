@@ -667,6 +667,7 @@ final class WebViewManager: NSObject {
                     "displayName": source.displayName,
                     "fileType": source.fileType.rawValue,
                     "status": source.status.rawValue,
+                    "embeddingStatus": source.embeddingStatus.rawValue,
                     "addedAt": formatter.string(from: source.addedAt)
                 ]
                 if let pageCount = source.pageCount {

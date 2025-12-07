@@ -173,7 +173,10 @@ final class PersistenceService {
             """, arguments: [id.uuidString])
 
             let sources = sourceRows.map { row -> SourceReference in
-                SourceReference(
+                let embeddingStatusRaw: String? = row["embedding_status"]
+                let embeddingStatus = embeddingStatusRaw.flatMap { SourceEmbeddingStatus(rawValue: $0) } ?? .none
+
+                return SourceReference(
                     id: UUID(uuidString: row["id"])!,
                     streamId: UUID(uuidString: row["stream_id"])!,
                     displayName: row["display_name"],
@@ -182,6 +185,7 @@ final class PersistenceService {
                     status: SourceStatus(rawValue: row["status"]) ?? .pending,
                     extractedText: row["extracted_text"],
                     pageCount: row["page_count"],
+                    embeddingStatus: embeddingStatus,
                     addedAt: Date(timeIntervalSince1970: row["added_at"])
                 )
             }

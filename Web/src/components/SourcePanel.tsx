@@ -71,15 +71,26 @@ interface SourceItemProps {
 function SourceItem({ source, onRemove }: SourceItemProps) {
   const icon = getFileIcon(source.fileType);
   const statusClass = `source-status--${source.status}`;
+  const embeddingInfo = getEmbeddingInfo(source.embeddingStatus);
 
   return (
     <div className={`source-item ${statusClass}`}>
       <span className="source-icon">{icon}</span>
       <div className="source-info">
         <span className="source-name">{source.displayName}</span>
-        {source.pageCount && (
-          <span className="source-meta">{source.pageCount} pages</span>
-        )}
+        <div className="source-meta-row">
+          {source.pageCount && (
+            <span className="source-meta">{source.pageCount} pages</span>
+          )}
+          {embeddingInfo && (
+            <span
+              className={`source-embedding-status source-embedding-status--${source.embeddingStatus}`}
+              title={embeddingInfo.tooltip}
+            >
+              {embeddingInfo.label}
+            </span>
+          )}
+        </div>
       </div>
       <button
         className="source-remove"
@@ -93,6 +104,20 @@ function SourceItem({ source, onRemove }: SourceItemProps) {
       </button>
     </div>
   );
+}
+
+function getEmbeddingInfo(status: string): { label: string; tooltip: string } | null {
+  switch (status) {
+    case 'processing':
+      return { label: 'Indexing…', tooltip: 'Creating semantic index for AI search' };
+    case 'complete':
+      return { label: 'Indexed', tooltip: 'Ready for semantic search' };
+    case 'failed':
+      return { label: 'Index failed', tooltip: 'Semantic indexing failed - full text will be used' };
+    case 'none':
+    default:
+      return null;
+  }
 }
 
 function getFileIcon(fileType: string): string {
