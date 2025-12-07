@@ -12,6 +12,7 @@ final class WebViewManager: NSObject {
     private let perplexityService: PerplexityService
     private let orchestrator: AIOrchestrator
     private let dependencyService: DependencyService
+    private var processingService: ProcessingService?
     private var mlxClassifier: MLXClassifier?
 
     override init() {
@@ -39,10 +40,16 @@ final class WebViewManager: NSObject {
             let p = try PersistenceService()
             self.persistence = p
             self.sourceService = SourceService(persistence: p)
+            self.processingService = ProcessingService(
+                orchestrator: orchestrator,
+                dependencyService: dependencyService,
+                persistence: p
+            )
         } catch {
             print("Failed to initialize persistence: \(error)")
             self.persistence = nil
             self.sourceService = nil
+            self.processingService = nil
         }
 
         super.init()
@@ -141,6 +148,39 @@ final class WebViewManager: NSObject {
 
                     let streamPayload = encodeStream(stream)
                     bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
+
+                    // Process live blocks (async, after stream is loaded)
+                    if let processingService {
+                        Task {
+                            await processingService.processStreamOpen(
+                                stream,
+                                onBlockRefreshStart: { [weak self] blockId in
+                                    self?.bridgeService.send(BridgeMessage(
+                                        type: "blockRefreshStart",
+                                        payload: ["cellId": AnyCodable(blockId.uuidString)]
+                                    ))
+                                },
+                                onBlockChunk: { [weak self] blockId, chunk in
+                                    self?.bridgeService.send(BridgeMessage(
+                                        type: "blockRefreshChunk",
+                                        payload: ["cellId": AnyCodable(blockId.uuidString), "chunk": AnyCodable(chunk)]
+                                    ))
+                                },
+                                onBlockRefreshComplete: { [weak self] blockId, content in
+                                    self?.bridgeService.send(BridgeMessage(
+                                        type: "blockRefreshComplete",
+                                        payload: ["cellId": AnyCodable(blockId.uuidString), "content": AnyCodable(content)]
+                                    ))
+                                },
+                                onBlockRefreshError: { [weak self] blockId, error in
+                                    self?.bridgeService.send(BridgeMessage(
+                                        type: "blockRefreshError",
+                                        payload: ["cellId": AnyCodable(blockId.uuidString), "error": AnyCodable(error.localizedDescription)]
+                                    ))
+                                }
+                            )
+                        }
+                    }
                 }
             } catch {
                 print("Failed to load stream: \(error)")
@@ -248,6 +288,40 @@ final class WebViewManager: NSObject {
                     "id": AnyCodable(cell.id.uuidString),
                     "dependents": AnyCodable(dependentIds)
                 ]))
+
+                // Trigger cascade updates for dependent blocks
+                if !dependents.isEmpty, let processingService, let stream = try persistence.loadStream(id: cell.streamId) {
+                    Task {
+                        await processingService.processCascadeUpdate(
+                            changedBlockId: cell.id,
+                            in: stream,
+                            onBlockRefreshStart: { [weak self] blockId in
+                                self?.bridgeService.send(BridgeMessage(
+                                    type: "blockRefreshStart",
+                                    payload: ["cellId": AnyCodable(blockId.uuidString)]
+                                ))
+                            },
+                            onBlockChunk: { [weak self] blockId, chunk in
+                                self?.bridgeService.send(BridgeMessage(
+                                    type: "blockRefreshChunk",
+                                    payload: ["cellId": AnyCodable(blockId.uuidString), "chunk": AnyCodable(chunk)]
+                                ))
+                            },
+                            onBlockRefreshComplete: { [weak self] blockId, content in
+                                self?.bridgeService.send(BridgeMessage(
+                                    type: "blockRefreshComplete",
+                                    payload: ["cellId": AnyCodable(blockId.uuidString), "content": AnyCodable(content)]
+                                ))
+                            },
+                            onBlockRefreshError: { [weak self] blockId, error in
+                                self?.bridgeService.send(BridgeMessage(
+                                    type: "blockRefreshError",
+                                    payload: ["cellId": AnyCodable(blockId.uuidString), "error": AnyCodable(error.localizedDescription)]
+                                ))
+                            }
+                        )
+                    }
+                }
             } catch {
                 print("Failed to save cell: \(error)")
             }

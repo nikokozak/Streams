@@ -8,6 +8,7 @@ interface CellProps {
   isNew?: boolean;
   isStreaming?: boolean;
   isModifying?: boolean;
+  isRefreshing?: boolean;
   pendingModifierPrompt?: string;
   isOnlyCell?: boolean;
   error?: string;
@@ -28,6 +29,7 @@ export function Cell({
   isNew = false,
   isStreaming = false,
   isModifying = false,
+  isRefreshing = false,
   pendingModifierPrompt,
   isOnlyCell = false,
   error,
@@ -179,6 +181,7 @@ export function Cell({
       : '';
 
   const streamingClass = isStreaming ? 'cell--streaming' : '';
+  const refreshingClass = isRefreshing ? 'cell--refreshing' : '';
   const errorClass = error ? 'cell--error' : '';
 
   // Show restatement view when: has restatement, not focused, not new
@@ -231,7 +234,7 @@ export function Cell({
   return (
     <div
       ref={containerRef}
-      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isMenuOpen ? 'cell--menu-open' : ''}`}
+      className={`cell ${cellTypeClass} ${streamingClass} ${refreshingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isMenuOpen ? 'cell--menu-open' : ''}`}
       onBlur={handleBlur}
       onFocus={handleFocus}
     >

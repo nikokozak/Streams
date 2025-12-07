@@ -18,6 +18,11 @@ interface ModifyingBlock {
   prompt: string;
 }
 
+/** Block refresh in progress (live blocks, cascade updates) */
+interface RefreshingBlock {
+  content: string;
+}
+
 interface BlockState {
   // Core data
   streamId: string | null;
@@ -27,6 +32,7 @@ interface BlockState {
   // UI State
   streamingBlocks: Map<string, StreamingBlock>;
   modifyingBlocks: Map<string, ModifyingBlock>;
+  refreshingBlocks: Map<string, RefreshingBlock>;
   errorBlocks: Map<string, string>;
   focusedBlockId: string | null;
   newBlockId: string | null;
@@ -74,6 +80,13 @@ interface BlockActions {
   focusNext: () => void;
   focusPrevious: () => void;
 
+  // Refreshing state (live blocks, cascade updates)
+  startRefreshing: (id: string) => void;
+  appendRefreshingContent: (id: string, chunk: string) => void;
+  completeRefreshing: (id: string) => void;
+  isRefreshing: (id: string) => boolean;
+  getRefreshingContent: (id: string) => string | undefined;
+
   // Reference helpers
   getBlockByRef: (ref: string) => CellType | undefined;
   getDependents: (id: string) => CellType[];
@@ -90,6 +103,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   blockOrder: [],
   streamingBlocks: new Map(),
   modifyingBlocks: new Map(),
+  refreshingBlocks: new Map(),
   errorBlocks: new Map(),
   focusedBlockId: null,
   newBlockId: null,
@@ -112,6 +126,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       blockOrder,
       streamingBlocks: new Map(),
       modifyingBlocks: new Map(),
+      refreshingBlocks: new Map(),
       errorBlocks: new Map(),
       focusedBlockId: null,
       newBlockId: null,
@@ -125,6 +140,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       blockOrder: [],
       streamingBlocks: new Map(),
       modifyingBlocks: new Map(),
+      refreshingBlocks: new Map(),
       errorBlocks: new Map(),
       focusedBlockId: null,
       newBlockId: null,
@@ -336,6 +352,35 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       set({ focusedBlockId: blockOrder[currentIndex - 1] });
     }
   },
+
+  // Refreshing (live blocks, cascade updates)
+  startRefreshing: (id) => {
+    const { refreshingBlocks } = get();
+    const newRefreshing = new Map(refreshingBlocks);
+    newRefreshing.set(id, { content: '' });
+    set({ refreshingBlocks: newRefreshing });
+  },
+
+  appendRefreshingContent: (id, chunk) => {
+    const { refreshingBlocks } = get();
+    const existing = refreshingBlocks.get(id);
+    if (!existing) return;
+
+    const newRefreshing = new Map(refreshingBlocks);
+    newRefreshing.set(id, { content: existing.content + chunk });
+    set({ refreshingBlocks: newRefreshing });
+  },
+
+  completeRefreshing: (id) => {
+    const { refreshingBlocks } = get();
+    const newRefreshing = new Map(refreshingBlocks);
+    newRefreshing.delete(id);
+    set({ refreshingBlocks: newRefreshing });
+  },
+
+  isRefreshing: (id) => get().refreshingBlocks.has(id),
+
+  getRefreshingContent: (id) => get().refreshingBlocks.get(id)?.content,
 
   // Reference helpers
   getBlockByRef: (ref) => {

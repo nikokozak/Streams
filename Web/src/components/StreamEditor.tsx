@@ -220,6 +220,57 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         store.setError(cellId, error);
         store.completeModifying(cellId);
       }
+
+      // Block refresh updates (live blocks, cascade updates)
+      if (message.type === 'blockRefreshStart' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        console.log('[BlockRefresh] Start:', cellId);
+        store.startRefreshing(cellId);
+      }
+
+      if (message.type === 'blockRefreshChunk' && message.payload?.cellId && message.payload?.chunk) {
+        const cellId = message.payload.cellId as string;
+        const chunk = message.payload.chunk as string;
+        store.appendRefreshingContent(cellId, chunk);
+      }
+
+      if (message.type === 'blockRefreshComplete' && message.payload?.cellId && message.payload?.content) {
+        const cellId = message.payload.cellId as string;
+        const rawContent = message.payload.content as string;
+        const htmlContent = markdownToHtml(rawContent);
+        console.log('[BlockRefresh] Complete:', cellId);
+
+        const cell = store.getBlock(cellId);
+        if (cell) {
+          store.updateBlock(cellId, { content: htmlContent });
+
+          // Save refreshed content to Swift
+          bridge.send({
+            type: 'saveCell',
+            payload: {
+              id: cellId,
+              streamId: stream.id,
+              content: htmlContent,
+              type: cell.type,
+              order: cell.order,
+              originalPrompt: cell.originalPrompt,
+              processingConfig: cell.processingConfig,
+              references: cell.references,
+              blockName: cell.blockName,
+            },
+          });
+        }
+
+        store.completeRefreshing(cellId);
+      }
+
+      if (message.type === 'blockRefreshError' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const error = message.payload.error as string;
+        console.error('[BlockRefresh] Error:', cellId, error);
+        store.setError(cellId, error);
+        store.completeRefreshing(cellId);
+      }
     });
     return unsubscribe;
   }, [stream.id, store]);
@@ -579,26 +630,31 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
           {cells.map((cell, index) => {
             const isStreaming = store.isStreaming(cell.id);
             const isModifying = store.isModifying(cell.id);
+            const isRefreshing = store.isRefreshing(cell.id);
             const modifyingData = store.getModifyingData(cell.id);
             const error = store.getError(cell.id);
             const streamingContent = store.getStreamingContent(cell.id);
             const modifyingContent = modifyingData?.content;
+            const refreshingContent = store.getRefreshingContent(cell.id);
 
-            // Convert streaming/modifying markdown to HTML for display
+            // Convert streaming/modifying/refreshing markdown to HTML for display
             let displayContent = cell.content;
             if (isStreaming && streamingContent) {
               displayContent = markdownToHtml(streamingContent);
             } else if (isModifying && modifyingContent) {
               displayContent = markdownToHtml(modifyingContent);
+            } else if (isRefreshing && refreshingContent) {
+              displayContent = markdownToHtml(refreshingContent);
             }
 
             return (
               <div key={cell.id} data-cell-id={cell.id}>
                 <Cell
-                  cell={(isStreaming || isModifying) ? { ...cell, content: displayContent } : cell}
+                  cell={(isStreaming || isModifying || isRefreshing) ? { ...cell, content: displayContent } : cell}
                   isNew={cell.id === newBlockId}
                   isStreaming={isStreaming}
                   isModifying={isModifying}
+                  isRefreshing={isRefreshing}
                   pendingModifierPrompt={modifyingData?.prompt}
                   isOnlyCell={cells.length === 1}
                   error={error}

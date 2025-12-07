@@ -1171,6 +1171,37 @@ body {
   padding: var(--spacing-sm) 0;
 }
 
+/* Refreshing state (live blocks, cascade updates) */
+.cell--refreshing {
+  position: relative;
+}
+
+.cell--refreshing::before {
+  background: var(--color-accent) !important;
+  animation: refresh-pulse 1.5s ease-in-out infinite;
+}
+
+.cell--refreshing .ProseMirror {
+  opacity: 0.7;
+}
+
+.cell--refreshing::after {
+  content: 'Refreshing...';
+  position: absolute;
+  top: var(--spacing-xs);
+  right: var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+@keyframes refresh-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* ==================== Settings ==================== */
 
 .settings {
