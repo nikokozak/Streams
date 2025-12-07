@@ -6,9 +6,16 @@ final class AIOrchestrator {
     private var providers: [String: LLMProvider] = [:]
     private var classifier: QueryClassifier?
     private let settings: SettingsService
+    private var retrievalService: RetrievalService?
 
-    init(settings: SettingsService = .shared) {
+    init(settings: SettingsService = .shared, retrievalService: RetrievalService? = nil) {
         self.settings = settings
+        self.retrievalService = retrievalService
+    }
+
+    /// Set the retrieval service for RAG
+    func setRetrievalService(_ service: RetrievalService) {
+        self.retrievalService = service
     }
 
     // MARK: - Provider Management
@@ -36,8 +43,14 @@ final class AIOrchestrator {
     // MARK: - Routing
 
     /// Route a request to the appropriate provider based on intent
+    /// - Parameters:
+    ///   - query: The user's query
+    ///   - streamId: Optional stream ID for RAG retrieval
+    ///   - priorCells: Conversation history
+    ///   - sourceContext: Fallback source context (used if RAG unavailable)
     func route(
         query: String,
+        streamId: UUID? = nil,
         priorCells: [[String: String]],
         sourceContext: String?,
         onChunk: @escaping (String) -> Void,
@@ -64,12 +77,28 @@ final class AIOrchestrator {
             return
         }
 
+        // Try RAG retrieval if available, otherwise use fallback source context
+        var contextToUse = sourceContext
+        if let streamId, let retrievalService {
+            do {
+                let retrievedChunks = try await retrievalService.retrieve(query: query, streamId: streamId)
+                if !retrievedChunks.isEmpty {
+                    contextToUse = retrievalService.buildContext(from: retrievedChunks)
+                    print("AIOrchestrator: Using RAG context (\(retrievedChunks.count) chunks)")
+                } else {
+                    print("AIOrchestrator: No RAG chunks found, using fallback context")
+                }
+            } catch {
+                print("AIOrchestrator: RAG retrieval failed, using fallback context - \(error)")
+            }
+        }
+
         // Build request and truncate to token budget
         let request = buildRequest(
             for: intent,
             query: query,
             priorCells: priorCells,
-            sourceContext: sourceContext
+            sourceContext: contextToUse
         ).truncated()
 
         // Stream the response

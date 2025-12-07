@@ -1,12 +1,20 @@
 import Foundation
 import PDFKit
 
-/// Manages file sources: bookmarks, access, and text extraction
+/// Manages file sources: bookmarks, access, text extraction, and RAG processing
 final class SourceService {
     private let persistence: PersistenceService
+    private let chunkingService: ChunkingService
+    private let embeddingService: EmbeddingService
 
-    init(persistence: PersistenceService) {
+    init(
+        persistence: PersistenceService,
+        chunkingService: ChunkingService = ChunkingService(),
+        embeddingService: EmbeddingService = EmbeddingService()
+    ) {
         self.persistence = persistence
+        self.chunkingService = chunkingService
+        self.embeddingService = embeddingService
     }
 
     // MARK: - Bookmark Creation
@@ -134,7 +142,7 @@ final class SourceService {
 
     // MARK: - Full Processing
 
-    /// Create and process a source: create bookmark, extract text, save
+    /// Create and process a source: create bookmark, extract text, save, and trigger RAG processing
     func addSource(from url: URL, to streamId: UUID) throws -> SourceReference {
         // Create the source with bookmark
         var source = try createSource(from: url, for: streamId)
@@ -153,7 +161,95 @@ final class SourceService {
         // Update in database
         try persistence.saveSource(source)
 
+        // Trigger RAG processing asynchronously if text was extracted
+        if source.status == .ready, source.extractedText != nil {
+            Task {
+                await processSourceForRAG(source: source)
+            }
+        }
+
         return source
+    }
+
+    // MARK: - RAG Processing
+
+    /// Process a source for RAG: chunk, embed, and store
+    func processSourceForRAG(source: SourceReference) async {
+        guard let text = source.extractedText, !text.isEmpty else {
+            print("RAG: No text to process for \(source.displayName)")
+            return
+        }
+
+        guard embeddingService.isConfigured else {
+            print("RAG: Embedding service not configured, skipping \(source.displayName)")
+            return
+        }
+
+        do {
+            // Mark as processing
+            try persistence.updateSourceEmbeddingStatus(source.id, status: "processing")
+            print("RAG: Processing \(source.displayName)...")
+
+            // Chunk the document
+            let chunks: [SourceChunk]
+            if source.fileType == .pdf {
+                // Re-access file for page-aware chunking
+                do {
+                    let url = try accessFile(source)
+                    defer { url.stopAccessingSecurityScopedResource() }
+
+                    if let document = PDFDocument(url: url) {
+                        chunks = chunkingService.chunkPDF(document: document, sourceId: source.id)
+                    } else {
+                        chunks = chunkingService.chunkText(text: text, sourceId: source.id)
+                    }
+                } catch {
+                    // Fall back to text-based chunking if file access fails
+                    print("RAG: File access failed, using text-based chunking: \(error)")
+                    chunks = chunkingService.chunkText(text: text, sourceId: source.id)
+                }
+            } else {
+                chunks = chunkingService.chunkText(text: text, sourceId: source.id)
+            }
+
+            guard !chunks.isEmpty else {
+                print("RAG: No chunks generated for \(source.displayName)")
+                try persistence.updateSourceEmbeddingStatus(source.id, status: "failed")
+                return
+            }
+
+            print("RAG: Generated \(chunks.count) chunks for \(source.displayName)")
+
+            // Save chunks
+            try persistence.saveChunks(chunks)
+
+            // Generate embeddings in batch
+            let texts = chunks.map { $0.content }
+            let embeddings = try await embeddingService.embedBatch(texts: texts)
+
+            guard embeddings.count == chunks.count else {
+                print("RAG: Embedding count mismatch for \(source.displayName)")
+                try persistence.updateSourceEmbeddingStatus(source.id, status: "failed")
+                return
+            }
+
+            // Save embeddings
+            for (chunk, embedding) in zip(chunks, embeddings) {
+                try persistence.saveEmbedding(
+                    chunkId: chunk.id,
+                    embedding: embedding,
+                    model: "text-embedding-3-small"
+                )
+            }
+
+            // Mark complete
+            try persistence.updateSourceEmbeddingStatus(source.id, status: "complete")
+            print("RAG: Completed processing \(source.displayName): \(chunks.count) chunks embedded")
+
+        } catch {
+            print("RAG: Processing failed for \(source.displayName): \(error)")
+            try? persistence.updateSourceEmbeddingStatus(source.id, status: "failed")
+        }
     }
 
     /// Remove a source

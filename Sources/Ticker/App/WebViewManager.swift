@@ -15,6 +15,11 @@ final class WebViewManager: NSObject {
     private var processingService: ProcessingService?
     private var mlxClassifier: MLXClassifier?
 
+    // RAG services
+    private let embeddingService: EmbeddingService
+    private let chunkingService: ChunkingService
+    private var retrievalService: RetrievalService?
+
     override init() {
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
@@ -28,6 +33,10 @@ final class WebViewManager: NSObject {
         self.aiService = AIService()
         self.perplexityService = PerplexityService()
 
+        // Initialize RAG services
+        self.embeddingService = EmbeddingService()
+        self.chunkingService = ChunkingService()
+
         // Initialize orchestrator and register providers
         self.orchestrator = AIOrchestrator()
         orchestrator.register(aiService)
@@ -39,7 +48,21 @@ final class WebViewManager: NSObject {
         do {
             let p = try PersistenceService()
             self.persistence = p
-            self.sourceService = SourceService(persistence: p)
+
+            // Create SourceService with RAG components
+            self.sourceService = SourceService(
+                persistence: p,
+                chunkingService: chunkingService,
+                embeddingService: embeddingService
+            )
+
+            // Create RetrievalService and wire to orchestrator
+            self.retrievalService = RetrievalService(
+                persistence: p,
+                embeddingService: embeddingService
+            )
+            orchestrator.setRetrievalService(retrievalService!)
+
             self.processingService = ProcessingService(
                 orchestrator: orchestrator,
                 dependencyService: dependencyService,
@@ -49,6 +72,7 @@ final class WebViewManager: NSObject {
             print("Failed to initialize persistence: \(error)")
             self.persistence = nil
             self.sourceService = nil
+            self.retrievalService = nil
             self.processingService = nil
         }
 
@@ -65,6 +89,23 @@ final class WebViewManager: NSObject {
     func load() {
         loadWebContent()
         loadMLXClassifier()
+        migrateExistingSourcesToRAG()
+    }
+
+    /// Migrate existing sources to RAG pipeline in background
+    private func migrateExistingSourcesToRAG() {
+        guard let persistence, let sourceService else { return }
+
+        Task {
+            // Wait 5 seconds after app launch to avoid blocking startup
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+
+            let migrationService = RAGMigrationService(
+                persistence: persistence,
+                sourceService: sourceService
+            )
+            await migrationService.migrateExistingSources()
+        }
     }
 
     /// Load the MLX classifier in the background
@@ -419,16 +460,22 @@ final class WebViewManager: NSObject {
                 }
             }
 
-            // Get source context if stream has sources
+            // Parse streamId for RAG retrieval
+            var streamIdForRAG: UUID? = nil
             var sourceContext: String? = nil
+
             if let streamIdValue = payload["streamId"]?.value as? String,
-               let streamId = UUID(uuidString: streamIdValue),
-               let stream = try? persistence.loadStream(id: streamId) {
-                let combinedText = stream.sources
-                    .compactMap { $0.extractedText }
-                    .joined(separator: "\n\n---\n\n")
-                if !combinedText.isEmpty {
-                    sourceContext = combinedText
+               let streamId = UUID(uuidString: streamIdValue) {
+                streamIdForRAG = streamId
+
+                // Build fallback source context (used if RAG unavailable)
+                if let stream = try? persistence.loadStream(id: streamId) {
+                    let combinedText = stream.sources
+                        .compactMap { $0.extractedText }
+                        .joined(separator: "\n\n---\n\n")
+                    if !combinedText.isEmpty {
+                        sourceContext = combinedText
+                    }
                 }
             }
 
@@ -461,10 +508,11 @@ final class WebViewManager: NSObject {
                 ))
             }
 
-            // Route through orchestrator (handles smart routing internally)
+            // Route through orchestrator (handles smart routing and RAG retrieval internally)
             Task {
                 await orchestrator.route(
                     query: currentCell,
+                    streamId: streamIdForRAG,
                     priorCells: priorCells,
                     sourceContext: sourceContext,
                     onChunk: onChunk,
