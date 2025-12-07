@@ -1,5 +1,10 @@
 import { create } from 'zustand';
 import { Cell as CellType } from '../types/models';
+import {
+  extractReferenceIdentifiers,
+  resolveIdentifiers,
+  findByShortIdOrName,
+} from '../utils/references';
 
 /** Streaming content accumulator for AI responses */
 interface StreamingBlock {
@@ -68,6 +73,12 @@ interface BlockActions {
   setNewBlockId: (id: string | null) => void;
   focusNext: () => void;
   focusPrevious: () => void;
+
+  // Reference helpers
+  getBlockByRef: (ref: string) => CellType | undefined;
+  getDependents: (id: string) => CellType[];
+  getReferences: (id: string) => CellType[];
+  parseAndResolveRefs: (content: string) => string[];
 }
 
 type BlockStore = BlockState & BlockActions;
@@ -324,5 +335,33 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     if (currentIndex > 0) {
       set({ focusedBlockId: blockOrder[currentIndex - 1] });
     }
+  },
+
+  // Reference helpers
+  getBlockByRef: (ref) => {
+    const { blocks } = get();
+    return findByShortIdOrName(blocks, ref);
+  },
+
+  getDependents: (id) => {
+    const { blocks } = get();
+    const blocksArray = Array.from(blocks.values());
+    // Find all blocks that reference this block
+    return blocksArray.filter((block) => block.references?.includes(id));
+  },
+
+  getReferences: (id) => {
+    const { blocks } = get();
+    const block = blocks.get(id);
+    if (!block?.references) return [];
+    return block.references
+      .map((refId) => blocks.get(refId))
+      .filter((b): b is CellType => b !== undefined);
+  },
+
+  parseAndResolveRefs: (content) => {
+    const { blocks } = get();
+    const identifiers = extractReferenceIdentifiers(content);
+    return resolveIdentifiers(identifiers, blocks);
   },
 }));

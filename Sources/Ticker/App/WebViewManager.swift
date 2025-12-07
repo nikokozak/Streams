@@ -11,6 +11,7 @@ final class WebViewManager: NSObject {
     private let aiService: AIService
     private let perplexityService: PerplexityService
     private let orchestrator: AIOrchestrator
+    private let dependencyService: DependencyService
     private var mlxClassifier: MLXClassifier?
 
     override init() {
@@ -30,6 +31,9 @@ final class WebViewManager: NSObject {
         self.orchestrator = AIOrchestrator()
         orchestrator.register(aiService)
         orchestrator.register(perplexityService)
+
+        // Initialize dependency service
+        self.dependencyService = DependencyService()
 
         do {
             let p = try PersistenceService()
@@ -132,12 +136,9 @@ final class WebViewManager: NSObject {
             }
             do {
                 if let stream = try persistence.loadStream(id: id) {
-                    // Debug: log cell info
-                    for cell in stream.cells {
-                        if cell.type == .aiResponse {
-                            print("[Stream Load] AI Cell \(cell.id): originalPrompt=\(cell.originalPrompt ?? "nil"), versions=\(cell.versions?.count ?? 0), modifiers=\(cell.modifiers?.count ?? 0)")
-                        }
-                    }
+                    // Build dependency graph for this stream
+                    dependencyService.buildGraph(from: stream.cells)
+
                     let streamPayload = encodeStream(stream)
                     bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
                 }
@@ -211,16 +212,42 @@ final class WebViewManager: NSObject {
                 return
             }
             do {
-                let cell = try decodeCell(from: payload)
-                // Debug logging
-                if let versions = cell.versions, !versions.isEmpty {
-                    print("[SaveCell] Cell \(cell.id) saving with \(versions.count) versions")
+                var cell = try decodeCell(from: payload)
+
+                // Parse references from content and resolve to UUIDs
+                let identifiers = DependencyService.extractReferenceIdentifiers(from: cell.content)
+                if !identifiers.isEmpty, let stream = try persistence.loadStream(id: cell.streamId) {
+                    let resolvedRefs = DependencyService.resolveIdentifiers(identifiers, in: stream.cells)
+                    cell = Cell(
+                        id: cell.id,
+                        streamId: cell.streamId,
+                        content: cell.content,
+                        restatement: cell.restatement,
+                        originalPrompt: cell.originalPrompt,
+                        type: cell.type,
+                        order: cell.order,
+                        modifiers: cell.modifiers,
+                        versions: cell.versions,
+                        activeVersionId: cell.activeVersionId,
+                        processingConfig: cell.processingConfig,
+                        references: resolvedRefs.isEmpty ? nil : resolvedRefs,
+                        blockName: cell.blockName
+                    )
                 }
-                if let modifiers = cell.modifiers, !modifiers.isEmpty {
-                    print("[SaveCell] Cell \(cell.id) saving with \(modifiers.count) modifiers")
-                }
+
+                // Update dependency graph
+                dependencyService.updateCell(cell)
+
                 try persistence.saveCell(cell)
-                bridgeService.send(BridgeMessage(type: "cellSaved", payload: ["id": AnyCodable(cell.id.uuidString)]))
+
+                // Find dependents that need cascade updates
+                let dependents = dependencyService.getCascadeDependents(of: cell.id)
+                let dependentIds = dependents.map { $0.uuidString }
+
+                bridgeService.send(BridgeMessage(type: "cellSaved", payload: [
+                    "id": AnyCodable(cell.id.uuidString),
+                    "dependents": AnyCodable(dependentIds)
+                ]))
             } catch {
                 print("Failed to save cell: \(error)")
             }
@@ -233,6 +260,9 @@ final class WebViewManager: NSObject {
                 return
             }
             do {
+                // Remove from dependency graph
+                dependencyService.removeCell(id: id)
+
                 try persistence.deleteCell(id: id)
                 bridgeService.send(BridgeMessage(type: "cellDeleted", payload: ["id": AnyCodable(id.uuidString)]))
             } catch {
