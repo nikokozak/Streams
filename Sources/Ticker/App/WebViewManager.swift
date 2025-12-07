@@ -566,6 +566,35 @@ final class WebViewManager: NSObject {
                 if let activeVersionId = cell.activeVersionId {
                     dict["activeVersionId"] = activeVersionId.uuidString
                 }
+                // Processing fields
+                if let processingConfig = cell.processingConfig {
+                    var configDict: [String: Any] = [:]
+                    if let refreshTrigger = processingConfig.refreshTrigger {
+                        configDict["refreshTrigger"] = refreshTrigger.rawValue
+                    }
+                    if let schema = processingConfig.schema {
+                        var schemaDict: [String: Any] = ["jsonSchema": schema.jsonSchema, "driftDetected": schema.driftDetected]
+                        if let lastValidatedAt = schema.lastValidatedAt {
+                            schemaDict["lastValidatedAt"] = formatter.string(from: lastValidatedAt)
+                        }
+                        configDict["schema"] = schemaDict
+                    }
+                    if let autoTransform = processingConfig.autoTransform {
+                        configDict["autoTransform"] = [
+                            "condition": autoTransform.condition,
+                            "transformation": autoTransform.transformation
+                        ]
+                    }
+                    if !configDict.isEmpty {
+                        dict["processingConfig"] = configDict
+                    }
+                }
+                if let references = cell.references, !references.isEmpty {
+                    dict["references"] = references.map { $0.uuidString }
+                }
+                if let blockName = cell.blockName {
+                    dict["blockName"] = blockName
+                }
                 return dict
             },
             "createdAt": formatter.string(from: stream.createdAt),
@@ -641,6 +670,35 @@ final class WebViewManager: NSObject {
             activeVersionId = UUID(uuidString: activeVersionIdStr)
         }
 
+        // Decode processing fields
+        var processingConfig: ProcessingConfig? = nil
+        if let configRaw = payload["processingConfig"]?.value as? [String: Any] {
+            var config = ProcessingConfig()
+            if let refreshTriggerRaw = configRaw["refreshTrigger"] as? String {
+                config.refreshTrigger = RefreshTrigger(rawValue: refreshTriggerRaw)
+            }
+            if let schemaRaw = configRaw["schema"] as? [String: Any],
+               let jsonSchema = schemaRaw["jsonSchema"] as? String {
+                config.schema = BlockSchema(
+                    jsonSchema: jsonSchema,
+                    driftDetected: schemaRaw["driftDetected"] as? Bool ?? false
+                )
+            }
+            if let autoTransformRaw = configRaw["autoTransform"] as? [String: Any],
+               let condition = autoTransformRaw["condition"] as? String,
+               let transformation = autoTransformRaw["transformation"] as? String {
+                config.autoTransform = AutoTransformRule(condition: condition, transformation: transformation)
+            }
+            processingConfig = config
+        }
+
+        var references: [UUID]? = nil
+        if let referencesRaw = payload["references"]?.value as? [String] {
+            references = referencesRaw.compactMap { UUID(uuidString: $0) }
+        }
+
+        let blockName = payload["blockName"]?.value as? String
+
         return Cell(
             id: id,
             streamId: streamId,
@@ -651,7 +709,10 @@ final class WebViewManager: NSObject {
             order: order,
             modifiers: modifiers,
             versions: versions,
-            activeVersionId: activeVersionId
+            activeVersionId: activeVersionId,
+            processingConfig: processingConfig,
+            references: references,
+            blockName: blockName
         )
     }
 }

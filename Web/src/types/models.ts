@@ -38,6 +38,12 @@ export interface Cell {
   versions?: CellVersion[];
   /** Currently displayed version (if not set, show latest) */
   activeVersionId?: string;
+  /** Processing configuration for automatic behavior (@live, schema validation, etc.) */
+  processingConfig?: ProcessingConfig;
+  /** IDs of blocks this block references (for dependency tracking) */
+  references?: string[];
+  /** Short name for @mentions (e.g., "nasdaq" for @block-nasdaq) */
+  blockName?: string;
 }
 
 /** The type of cell content */
@@ -88,3 +94,34 @@ export type SourceLocation =
   | { type: 'whole' }
   | { type: 'page'; page: number }
   | { type: 'pageRange'; startPage: number; endPage: number };
+
+/** Configuration for automatic block processing behavior */
+export interface ProcessingConfig {
+  /** When this block should refresh its content */
+  refreshTrigger?: RefreshTrigger;
+  /** Schema for validating AI responses */
+  schema?: BlockSchema;
+  /** Rule for automatic content transformation */
+  autoTransform?: AutoTransformRule;
+}
+
+/** Triggers for automatic block refresh */
+export type RefreshTrigger = 'onStreamOpen' | 'onDependencyChange' | 'manual';
+
+/** Schema for validating and constraining AI responses */
+export interface BlockSchema {
+  /** JSON Schema string for validation */
+  jsonSchema: string;
+  /** When the block was last validated against the schema */
+  lastValidatedAt?: string;
+  /** Whether the current content has drifted from the schema */
+  driftDetected?: boolean;
+}
+
+/** Rule for automatic content transformation */
+export interface AutoTransformRule {
+  /** Condition that triggers the transformation (e.g., "contentLength > 500") */
+  condition: string;
+  /** The transformation to apply (e.g., "summarize") */
+  transformation: string;
+}

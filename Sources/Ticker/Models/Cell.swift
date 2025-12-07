@@ -60,6 +60,12 @@ struct Cell: Identifiable, Codable {
     var versions: [CellVersion]?
     /// Currently displayed version (if not set, show latest)
     var activeVersionId: UUID?
+    /// Processing configuration for automatic behavior (@live, schema validation, etc.)
+    var processingConfig: ProcessingConfig?
+    /// IDs of blocks this block references (for dependency tracking)
+    var references: [UUID]?
+    /// Short name for @mentions (e.g., "nasdaq" for @block-nasdaq)
+    var blockName: String?
 
     init(
         id: UUID = UUID(),
@@ -74,7 +80,10 @@ struct Cell: Identifiable, Codable {
         updatedAt: Date = Date(),
         modifiers: [Modifier]? = nil,
         versions: [CellVersion]? = nil,
-        activeVersionId: UUID? = nil
+        activeVersionId: UUID? = nil,
+        processingConfig: ProcessingConfig? = nil,
+        references: [UUID]? = nil,
+        blockName: String? = nil
     ) {
         self.id = id
         self.streamId = streamId
@@ -89,6 +98,9 @@ struct Cell: Identifiable, Codable {
         self.modifiers = modifiers
         self.versions = versions
         self.activeVersionId = activeVersionId
+        self.processingConfig = processingConfig
+        self.references = references
+        self.blockName = blockName
     }
 }
 

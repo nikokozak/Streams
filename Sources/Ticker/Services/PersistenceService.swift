@@ -89,6 +89,14 @@ final class PersistenceService {
             }
         }
 
+        migrator.registerMigration("v5_processing") { db in
+            try db.alter(table: "cells") { t in
+                t.add(column: "processing_config_json", .text)
+                t.add(column: "references_json", .text)
+                t.add(column: "block_name", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -126,9 +134,9 @@ final class PersistenceService {
 
             let sourceRows = try Row.fetchAll(db, sql: "SELECT * FROM sources WHERE stream_id = ? ORDER BY added_at", arguments: [id.uuidString])
             let cellRows = try Row.fetchAll(db, sql: """
-                SELECT id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id
-                FROM cells 
-                WHERE stream_id = ? 
+                SELECT id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name
+                FROM cells
+                WHERE stream_id = ?
                 ORDER BY position
             """, arguments: [id.uuidString])
 
@@ -171,6 +179,19 @@ final class PersistenceService {
                     activeVersionId = UUID(uuidString: activeVersionIdStr)
                 }
 
+                // Decode processing fields
+                var processingConfig: ProcessingConfig? = nil
+                if let processingConfigJson: String = row["processing_config_json"] {
+                    processingConfig = try JSONDecoder().decode(ProcessingConfig.self, from: Data(processingConfigJson.utf8))
+                }
+
+                var references: [UUID]? = nil
+                if let referencesJson: String = row["references_json"] {
+                    references = try JSONDecoder().decode([UUID].self, from: Data(referencesJson.utf8))
+                }
+
+                let blockName: String? = row["block_name"]
+
                 return Cell(
                     id: UUID(uuidString: row["id"])!,
                     streamId: UUID(uuidString: row["stream_id"])!,
@@ -184,7 +205,10 @@ final class PersistenceService {
                     updatedAt: Date(timeIntervalSince1970: row["updated_at"]),
                     modifiers: modifiers,
                     versions: versions,
-                    activeVersionId: activeVersionId
+                    activeVersionId: activeVersionId,
+                    processingConfig: processingConfig,
+                    references: references,
+                    blockName: blockName
                 )
             }
 
@@ -255,17 +279,32 @@ final class PersistenceService {
 
             let activeVersionIdStr = cell.activeVersionId?.uuidString
 
+            // Encode processing fields
+            let processingConfigJson: String?
+            if let processingConfig = cell.processingConfig {
+                processingConfigJson = String(data: try JSONEncoder().encode(processingConfig), encoding: .utf8)
+            } else {
+                processingConfigJson = nil
+            }
+
+            let referencesJson: String?
+            if let references = cell.references {
+                referencesJson = String(data: try JSONEncoder().encode(references), encoding: .utf8)
+            } else {
+                referencesJson = nil
+            }
+
             try db.execute(
                 sql: """
-                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         content = excluded.content,
                         restatement = excluded.restatement,
-                        original_prompt = CASE 
-                            WHEN excluded.type = 'aiResponse' AND excluded.original_prompt IS NULL 
-                            THEN cells.original_prompt 
-                            ELSE excluded.original_prompt 
+                        original_prompt = CASE
+                            WHEN excluded.type = 'aiResponse' AND excluded.original_prompt IS NULL
+                            THEN cells.original_prompt
+                            ELSE excluded.original_prompt
                         END,
                         type = excluded.type,
                         state = excluded.state,
@@ -274,7 +313,10 @@ final class PersistenceService {
                         position = excluded.position,
                         modifiers_json = excluded.modifiers_json,
                         versions_json = excluded.versions_json,
-                        active_version_id = excluded.active_version_id
+                        active_version_id = excluded.active_version_id,
+                        processing_config_json = excluded.processing_config_json,
+                        references_json = excluded.references_json,
+                        block_name = excluded.block_name
                 """,
                 arguments: [
                     cell.id.uuidString,
@@ -291,7 +333,10 @@ final class PersistenceService {
                     cell.order,
                     modifiersJson,
                     versionsJson,
-                    activeVersionIdStr
+                    activeVersionIdStr,
+                    processingConfigJson,
+                    referencesJson,
+                    cell.blockName
                 ]
             )
 
