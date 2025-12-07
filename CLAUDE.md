@@ -24,14 +24,20 @@ Sources/Ticker/
 │   └── BridgeService.swift      # Swift ↔ JS messaging
 ├── Services/
 │   ├── Prompts.swift            # All AI prompts (edit to tune behavior)
-│   ├── AIService.swift          # OpenAI streaming
-│   ├── PerplexityService.swift  # Real-time search
-│   ├── DispatcherService.swift  # Query routing
+│   ├── AIOrchestrator.swift     # Routes queries to providers
+│   ├── AIService.swift          # OpenAI streaming (LLMProvider)
+│   ├── PerplexityService.swift  # Real-time search (LLMProvider)
 │   ├── MLXClassifier.swift      # Local intent classification
 │   ├── PersistenceService.swift # SQLite/GRDB
 │   ├── SourceService.swift      # File bookmarks, PDF extraction
-│   └── SettingsService.swift    # UserDefaults
-├── Models/                      # Stream, Cell, SourceReference
+│   ├── SettingsService.swift    # UserDefaults
+│   └── Providers/
+│       └── LLMProvider.swift    # Protocol for AI providers
+├── Models/
+│   ├── Cell.swift               # Cell with modifiers, versions, processing
+│   ├── ProcessingConfig.swift   # Live blocks, schemas, auto-transforms
+│   ├── Stream.swift
+│   └── SourceReference.swift
 └── Resources/
 
 Web/src/
@@ -41,19 +47,42 @@ Web/src/
 │   ├── CellEditor.tsx           # TipTap wrapper
 │   ├── SourcePanel.tsx          # Source sidebar
 │   └── Settings.tsx             # API keys, routing toggle
+├── store/
+│   └── blockStore.ts            # Zustand state (cells, streaming, errors)
 ├── utils/markdown.ts            # Markdown → HTML
+├── types/models.ts              # TypeScript types
 └── styles/index.css
 ```
 
 ### Smart Routing
 
 ```
-Query → MLXClassifier (local) → DispatcherService
-                                    ├→ PerplexityService (search/news)
-                                    └→ AIService (knowledge)
+Query → AIOrchestrator → MLXClassifier (local)
+                             ├→ PerplexityService (search/news)
+                             └→ AIService (knowledge)
 ```
 
 Enable in Settings. Requires Perplexity API key.
+
+### Provider Pattern
+
+AI services implement `LLMProvider` protocol for extensibility:
+```swift
+protocol LLMProvider {
+    var id: String { get }
+    var isConfigured: Bool { get }
+    func stream(request: LLMRequest, onChunk:, onComplete:, onError:) async
+}
+```
+
+### Block Processing (WIP)
+
+Cells can have `ProcessingConfig` for:
+- `refreshTrigger`: `onStreamOpen` (live), `onDependencyChange`, `manual`
+- `schema`: JSON Schema validation
+- `autoTransform`: Rules for automatic transformations
+- `references`: Block dependencies (`@block-xxxx` syntax)
+- `blockName`: Short name for @mentions
 
 ---
 
@@ -79,8 +108,14 @@ cd Web && npm run typecheck       # Type check
 ## Key Concepts
 
 - **Stream**: A thinking session with cells and sources
-- **Cell**: Content unit (`text`, `aiResponse`, `quote`). May have `restatement` (heading form)
-- **Prompts.swift**: Edit to tune AI behavior (markdown, terseness, etc.)
+- **Cell**: Content unit (`text`, `aiResponse`, `quote`)
+  - `restatement`: Heading form for prompts
+  - `originalPrompt`: User's original text (for AI responses)
+  - `modifiers`: Chain of applied transformations
+  - `versions`: Content snapshots from modifier chain
+  - `processingConfig`: Live refresh, schemas, auto-transforms
+- **blockStore (Zustand)**: Centralized state for all cells
+- **Prompts.swift**: Edit to tune AI behavior
 
 ---
 

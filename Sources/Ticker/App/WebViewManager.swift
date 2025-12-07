@@ -10,7 +10,7 @@ final class WebViewManager: NSObject {
     private let sourceService: SourceService?
     private let aiService: AIService
     private let perplexityService: PerplexityService
-    private let dispatcherService: DispatcherService
+    private let orchestrator: AIOrchestrator
     private var mlxClassifier: MLXClassifier?
 
     override init() {
@@ -25,11 +25,11 @@ final class WebViewManager: NSObject {
         // Initialize services
         self.aiService = AIService()
         self.perplexityService = PerplexityService()
-        self.dispatcherService = DispatcherService(
-            classifier: nil,  // Will be set after MLX loads
-            aiService: AIService(),
-            perplexityService: PerplexityService()
-        )
+
+        // Initialize orchestrator and register providers
+        self.orchestrator = AIOrchestrator()
+        orchestrator.register(aiService)
+        orchestrator.register(perplexityService)
 
         do {
             let p = try PersistenceService()
@@ -63,7 +63,7 @@ final class WebViewManager: NSObject {
                 let classifier = MLXClassifier()
                 try await classifier.prepare()
                 self.mlxClassifier = classifier
-                dispatcherService.setClassifier(classifier)
+                orchestrator.setClassifier(classifier)
                 print("MLX classifier loaded and ready")
             } catch {
                 print("Failed to load MLX classifier: \(error)")
@@ -349,22 +349,10 @@ final class WebViewManager: NSObject {
                 ))
             }
 
-            // Use dispatcher if smart routing is enabled, otherwise direct to AI
-            if SettingsService.shared.smartRoutingEnabled && SettingsService.shared.isPerplexityConfigured {
-                Task {
-                    await dispatcherService.dispatch(
-                        query: currentCell,
-                        priorCells: priorCells,
-                        sourceContext: sourceContext,
-                        onChunk: onChunk,
-                        onComplete: onComplete,
-                        onError: onError
-                    )
-                }
-            } else {
-                // Direct to OpenAI
-                aiService.think(
-                    currentCell: currentCell,
+            // Route through orchestrator (handles smart routing internally)
+            Task {
+                await orchestrator.route(
+                    query: currentCell,
                     priorCells: priorCells,
                     sourceContext: sourceContext,
                     onChunk: onChunk,

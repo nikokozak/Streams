@@ -1,10 +1,15 @@
 import Foundation
 
 /// Handles AI interactions with OpenAI API
-final class AIService {
+final class AIService: LLMProvider {
     private let settings: SettingsService
     private let baseURL = "https://api.openai.com/v1/chat/completions"
     private let model = "gpt-4o-mini"
+
+    // MARK: - LLMProvider
+
+    let id = "openai"
+    let name = "OpenAI"
 
     init(settings: SettingsService = .shared) {
         self.settings = settings
@@ -18,6 +23,53 @@ final class AIService {
     var isConfigured: Bool {
         guard let key = apiKey else { return false }
         return !key.isEmpty
+    }
+
+    /// LLMProvider streaming implementation
+    func stream(
+        request: LLMRequest,
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping () -> Void,
+        onError: @escaping (Error) -> Void
+    ) async {
+        guard let apiKey else {
+            onError(LLMProviderError.notConfigured(name))
+            return
+        }
+
+        var messages: [[String: String]] = [
+            ["role": "system", "content": request.systemPrompt]
+        ]
+        for msg in request.messages {
+            messages.append(["role": msg.role, "content": msg.content])
+        }
+
+        var requestBody: [String: Any] = [
+            "model": model,
+            "messages": messages,
+            "stream": true,
+            "temperature": request.temperature
+        ]
+        if let maxTokens = request.maxTokens {
+            requestBody["max_tokens"] = maxTokens
+        }
+
+        guard let url = URL(string: baseURL),
+              let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            onError(LLMProviderError.invalidRequest)
+            return
+        }
+
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = bodyData
+
+        let delegate = StreamingDelegate(onChunk: onChunk, onComplete: onComplete, onError: onError)
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: .main)
+        let task = session.dataTask(with: urlRequest)
+        task.resume()
     }
 
     // MARK: - Restatement

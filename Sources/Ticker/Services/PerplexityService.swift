@@ -1,10 +1,15 @@
 import Foundation
 
 /// Service for Perplexity API calls (real-time search)
-final class PerplexityService {
+final class PerplexityService: LLMProvider {
     private let settings: SettingsService
     private let baseURL = "https://api.perplexity.ai/chat/completions"
     private let model = "sonar"  // Fast, good for search queries
+
+    // MARK: - LLMProvider
+
+    let id = "perplexity"
+    let name = "Perplexity"
 
     init(settings: SettingsService = .shared) {
         self.settings = settings
@@ -20,64 +25,63 @@ final class PerplexityService {
         return !key.isEmpty
     }
 
-
-    /// Search with streaming response using async/await
-    func search(
-        query: String,
+    /// LLMProvider streaming implementation
+    func stream(
+        request: LLMRequest,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void
     ) async {
         guard let apiKey else {
-            onError(PerplexityError.notConfigured)
+            onError(LLMProviderError.notConfigured(name))
             return
         }
 
-        let messages: [[String: String]] = [
-            ["role": "system", "content": Prompts.search],
-            ["role": "user", "content": query]
+        var messages: [[String: String]] = [
+            ["role": "system", "content": request.systemPrompt]
         ]
+        for msg in request.messages {
+            messages.append(["role": msg.role, "content": msg.content])
+        }
 
-        let requestBody: [String: Any] = [
+        var requestBody: [String: Any] = [
             "model": model,
             "messages": messages,
             "stream": true,
-            "temperature": 0.2,
-            "max_tokens": 1024
+            "temperature": request.temperature
         ]
+        if let maxTokens = request.maxTokens {
+            requestBody["max_tokens"] = maxTokens
+        }
 
         guard let url = URL(string: baseURL),
               let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            onError(PerplexityError.invalidRequest)
+            onError(LLMProviderError.invalidRequest)
             return
         }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = bodyData
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.httpBody = bodyData
 
         do {
-            let (bytes, response) = try await URLSession.shared.bytes(for: request)
+            let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                onError(PerplexityError.invalidRequest)
+                onError(LLMProviderError.invalidRequest)
                 return
             }
 
             if httpResponse.statusCode != 200 {
-                onError(PerplexityError.apiError(httpResponse.statusCode, "API request failed"))
+                onError(LLMProviderError.apiError(httpResponse.statusCode, "API request failed"))
                 return
             }
 
-            var buffer = ""
-
             for try await line in bytes.lines {
-                buffer = line
-
-                if buffer.hasPrefix("data: ") {
-                    let jsonString = String(buffer.dropFirst(6))
+                if line.hasPrefix("data: ") {
+                    let jsonString = String(line.dropFirst(6))
 
                     if jsonString == "[DONE]" {
                         await MainActor.run { onComplete() }
@@ -100,23 +104,21 @@ final class PerplexityService {
             await MainActor.run { onError(error) }
         }
     }
-}
 
-// MARK: - Errors
 
-enum PerplexityError: LocalizedError {
-    case notConfigured
-    case invalidRequest
-    case apiError(Int, String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notConfigured:
-            return "Perplexity API key not configured. Go to Settings to add your key."
-        case .invalidRequest:
-            return "Failed to build API request"
-        case .apiError(let code, let message):
-            return "API error (\(code)): \(message)"
-        }
+    /// Search with streaming response (convenience wrapper around stream)
+    func search(
+        query: String,
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping () -> Void,
+        onError: @escaping (Error) -> Void
+    ) async {
+        let request = LLMRequest(
+            systemPrompt: Prompts.search,
+            messages: [(role: "user", content: query)],
+            temperature: 0.2,
+            maxTokens: 1024
+        )
+        await stream(request: request, onChunk: onChunk, onComplete: onComplete, onError: onError)
     }
 }
