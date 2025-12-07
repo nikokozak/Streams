@@ -51,6 +51,14 @@ export function App() {
     bridge.send({ type: 'loadStreams' });
   };
 
+  const handleDeleteStream = () => {
+    if (currentStream) {
+      bridge.send({ type: 'deleteStream', payload: { id: currentStream.id } });
+      setCurrentStream(null);
+      setView('list');
+    }
+  };
+
   const handleOpenSettings = () => {
     setView('settings');
   };
@@ -68,6 +76,7 @@ export function App() {
       <StreamEditor
         stream={currentStream}
         onBack={handleBackToList}
+        onDelete={handleDeleteStream}
       />
     );
   }

@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { Cell as CellType } from '../types';
 import { CellEditor } from './CellEditor';
+import { ModifierMenu } from './ModifierMenu';
 
 interface CellProps {
   cell: CellType;
   isNew?: boolean;
   isStreaming?: boolean;
+  isModifying?: boolean;
+  pendingModifierPrompt?: string;
   isOnlyCell?: boolean;
   error?: string;
   onUpdate: (content: string) => void;
@@ -13,6 +16,8 @@ interface CellProps {
   onEnter: () => void;
   onThink: () => void;
   onRegenerate?: (newPrompt: string) => void;
+  onApplyModifier?: (prompt: string) => void;
+  onSelectVersion?: (versionId: string) => void;
   onFocusPrevious: () => void;
   onFocusNext: () => void;
   registerFocus: (focus: () => void) => void;
@@ -22,6 +27,8 @@ export function Cell({
   cell,
   isNew = false,
   isStreaming = false,
+  isModifying = false,
+  pendingModifierPrompt,
   isOnlyCell = false,
   error,
   onUpdate,
@@ -29,17 +36,17 @@ export function Cell({
   onEnter,
   onThink,
   onRegenerate,
+  onApplyModifier,
+  onSelectVersion,
   onFocusPrevious,
   onFocusNext,
   registerFocus,
 }: CellProps) {
   const [localContent, setLocalContent] = useState(cell.content);
   const [isFocused, setIsFocused] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [editedPrompt, setEditedPrompt] = useState(cell.originalPrompt || '');
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const saveTimeoutRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const promptInputRef = useRef<HTMLInputElement>(null);
 
   // Does this cell have a restatement (dual-representation)?
   const hasRestatement = Boolean(cell.restatement) && cell.type === 'text';
@@ -120,6 +127,20 @@ export function Cell({
     }
   };
 
+  // Close menu when clicking outside the cell
+  useEffect(() => {
+    if (!isMenuOpen) return;
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setIsMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [isMenuOpen]);
+
   // Handle delete - save first, then delete
   const handleBackspaceEmpty = () => {
     saveNow();
@@ -142,36 +163,14 @@ export function Cell({
     };
   }, []);
 
-  // Sync local content with cell prop (for streaming updates)
+  // Sync local content with cell prop (for streaming updates and version changes)
   useEffect(() => {
-    if (isStreaming) {
+    // Always sync when content changes from outside (streaming, modifying, or version switch)
+    // but only if we're not actively editing (not focused)
+    if (isStreaming || isModifying || !isFocused) {
       setLocalContent(cell.content);
     }
-  }, [cell.content, isStreaming]);
-
-  // Sync edited prompt with cell prop
-  useEffect(() => {
-    setEditedPrompt(cell.originalPrompt || '');
-  }, [cell.originalPrompt]);
-
-  // Handle regenerate
-  const handleRegenerate = () => {
-    if (editedPrompt.trim() && onRegenerate) {
-      setIsDrawerOpen(false);
-      onRegenerate(editedPrompt.trim());
-    }
-  };
-
-  // Handle prompt input key down
-  const handlePromptKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleRegenerate();
-    } else if (e.key === 'Escape') {
-      setIsDrawerOpen(false);
-      setEditedPrompt(cell.originalPrompt || '');
-    }
-  };
+  }, [cell.content, isStreaming, isModifying, isFocused]);
 
   const cellTypeClass = cell.type === 'aiResponse'
     ? 'cell--ai'
@@ -185,53 +184,82 @@ export function Cell({
   // Show restatement view when: has restatement, not focused, not new
   const showRestatementView = hasRestatement && !isFocused && !isNew;
 
-  // Does this AI cell have an original prompt?
-  const hasOriginalPrompt = cell.type === 'aiResponse' && Boolean(cell.originalPrompt);
+  // Modifier state
+  const modifiers = cell.modifiers || [];
+  const isAiCell = cell.type === 'aiResponse';
+
+  // Handle regenerating from the original prompt (clears all modifiers)
+  const handleRegenerateFromOriginal = (newPrompt: string) => {
+    if (onRegenerate) {
+      onRegenerate(newPrompt);
+      setIsMenuOpen(false);
+    }
+  };
+
+  // Handle regenerating from a specific modifier index
+  const handleRegenerateFromModifier = (_modifierIndex: number, newPrompt: string) => {
+    // For now, we just apply the modifier as a new one
+    // TODO: In the future, we could re-apply from that point
+    if (onApplyModifier) {
+      onApplyModifier(newPrompt);
+      setIsMenuOpen(false);
+    }
+  };
+
+  // Handle adding a new modifier
+  const handleAddModifier = (prompt: string) => {
+    if (onApplyModifier) {
+      onApplyModifier(prompt);
+      // Keep menu open to show processing state
+      setIsMenuOpen(true);
+    }
+  };
+
+  // Handle version selection
+  const handleSelectVersion = (versionId: string) => {
+    if (onSelectVersion) {
+      onSelectVersion(versionId);
+    }
+  };
+
+  // Track if we're waiting for AI response (triggered but no content yet)
+  const isWaitingForResponse = isStreaming && !cell.content;
+
+  // Versions for display
+  const versions = cell.versions || [];
 
   return (
     <div
       ref={containerRef}
-      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isDrawerOpen ? 'cell--drawer-open' : ''}`}
+      className={`cell ${cellTypeClass} ${streamingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isMenuOpen ? 'cell--menu-open' : ''}`}
       onBlur={handleBlur}
       onFocus={handleFocus}
     >
-      {/* Prompt drawer for AI cells */}
-      {hasOriginalPrompt && (
-        <div className="cell-prompt-header">
-          <button
-            className="cell-prompt-toggle"
-            onClick={() => {
-              setIsDrawerOpen(!isDrawerOpen);
-              if (!isDrawerOpen) {
-                setTimeout(() => promptInputRef.current?.focus(), 0);
-              }
-            }}
-          >
-            <span className="cell-prompt-arrow">{isDrawerOpen ? '▾' : '▸'}</span>
-            <span className="cell-prompt-label">Asked</span>
-          </button>
-          {isDrawerOpen && (
-            <div className="cell-prompt-drawer">
-              <input
-                ref={promptInputRef}
-                type="text"
-                className="cell-prompt-input"
-                value={editedPrompt}
-                onChange={(e) => setEditedPrompt(e.target.value)}
-                onKeyDown={handlePromptKeyDown}
-                placeholder="Edit your question..."
-              />
-              <button
-                className="cell-prompt-regenerate"
-                onClick={handleRegenerate}
-                disabled={!editedPrompt.trim() || isStreaming}
-                title="Regenerate response"
-              >
-                ↻
-              </button>
-            </div>
-          )}
-        </div>
+      {/* Circle indicator for AI cells - click to open modifier menu */}
+      {isAiCell && !isStreaming && (
+        <button
+          className="cell-circle-indicator"
+          onClick={() => setIsMenuOpen(!isMenuOpen)}
+          aria-label="Modifier history"
+        />
+      )}
+
+      {/* Modifier menu - inline above cell content, pushes content down */}
+      {/* Show when: menu is open OR waiting for initial response (no content yet) */}
+      {isAiCell && (isMenuOpen || isWaitingForResponse) && cell.originalPrompt && (
+        <ModifierMenu
+          originalPrompt={cell.originalPrompt}
+          modifiers={modifiers}
+          versions={versions}
+          activeVersionId={cell.activeVersionId}
+          isProcessing={isWaitingForResponse || isModifying}
+          pendingModifierPrompt={pendingModifierPrompt}
+          onClose={() => setIsMenuOpen(false)}
+          onRegenerateFromOriginal={handleRegenerateFromOriginal}
+          onRegenerateFromModifier={handleRegenerateFromModifier}
+          onAddModifier={handleAddModifier}
+          onSelectVersion={handleSelectVersion}
+        />
       )}
 
       {error ? (

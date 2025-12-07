@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { Stream, Cell as CellType, SourceReference, bridge } from '../types';
+import { Stream, Cell as CellType, SourceReference, Modifier, CellVersion, bridge } from '../types';
 import { Cell } from './Cell';
 import { SourcePanel } from './SourcePanel';
 import { markdownToHtml } from '../utils/markdown';
@@ -14,6 +14,7 @@ function stripHtml(html: string): string {
 interface StreamEditorProps {
   stream: Stream;
   onBack: () => void;
+  onDelete: () => void;
 }
 
 interface StreamingCell {
@@ -21,7 +22,14 @@ interface StreamingCell {
   content: string;
 }
 
-export function StreamEditor({ stream, onBack }: StreamEditorProps) {
+interface ModifyingCell {
+  cellId: string;
+  modifierId: string;
+  content: string;
+  prompt: string;
+}
+
+export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   const [cells, setCells] = useState<CellType[]>(stream.cells);
   const [sources, setSources] = useState<SourceReference[]>(stream.sources);
   const [title, setTitle] = useState(stream.title);
@@ -29,6 +37,8 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
   const [newCellId, setNewCellId] = useState<string | null>(null);
   const [streamingCells, setStreamingCells] = useState<Map<string, StreamingCell>>(new Map());
   const [errorCells, setErrorCells] = useState<Map<string, string>>(new Map());
+  const [modifyingCells, setModifyingCells] = useState<Map<string, ModifyingCell>>(new Map());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const cellFocusRefs = useRef<Map<string, () => void>>(new Map());
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -65,32 +75,36 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
 
       if (message.type === 'aiComplete' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const rawContent = streamingCells.get(cellId)?.content || '';
-        // Convert markdown to HTML for TipTap
-        const htmlContent = markdownToHtml(rawContent);
 
-        // Update cell with final content and save
-        setCells(prev => prev.map(c =>
-          c.id === cellId ? { ...c, content: htmlContent, updatedAt: new Date().toISOString() } : c
-        ));
+        // Use functional updates to avoid stale closures
+        setStreamingCells(prevStreaming => {
+          const rawContent = prevStreaming.get(cellId)?.content || '';
+          // Convert markdown to HTML for TipTap
+          const htmlContent = markdownToHtml(rawContent);
 
-        // Save to Swift (store as HTML)
-        const cell = cells.find(c => c.id === cellId);
-        if (cell) {
-          bridge.send({
-            type: 'saveCell',
-            payload: {
-              id: cellId,
-              streamId: stream.id,
-              content: htmlContent,
-              type: 'aiResponse',
-              order: cell.order,
-            },
+          // Update cell with final content and save
+          setCells(prevCells => {
+            const cell = prevCells.find(c => c.id === cellId);
+            if (cell) {
+              // Save to Swift (store as HTML)
+              bridge.send({
+                type: 'saveCell',
+                payload: {
+                  id: cellId,
+                  streamId: stream.id,
+                  content: htmlContent,
+                  type: 'aiResponse',
+                  order: cell.order,
+                  originalPrompt: cell.originalPrompt,
+                },
+              });
+            }
+            return prevCells.map(c =>
+              c.id === cellId ? { ...c, content: htmlContent, updatedAt: new Date().toISOString() } : c
+            );
           });
-        }
 
-        setStreamingCells(prev => {
-          const updated = new Map(prev);
+          const updated = new Map(prevStreaming);
           updated.delete(cellId);
           return updated;
         });
@@ -108,9 +122,148 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
         });
       }
 
+      // Modifier streaming updates
+      if (message.type === 'modifierCreated' && message.payload?.cellId && message.payload?.modifier) {
+        const cellId = message.payload.cellId as string;
+        const modifier = message.payload.modifier as Modifier;
+        console.log('[Modifier] Created:', { cellId, modifier });
+
+        // Add the modifier to the cell
+        setCells(prev => prev.map(c => {
+          if (c.id !== cellId) return c;
+          const existingModifiers = c.modifiers || [];
+          return { ...c, modifiers: [...existingModifiers, modifier] };
+        }));
+
+        // Update the tracking entry with the modifier ID (prompt was already set in handleApplyModifier)
+        setModifyingCells(prev => {
+          const existing = prev.get(cellId);
+          if (existing) {
+            const updated = new Map(prev);
+            updated.set(cellId, { ...existing, modifierId: modifier.id });
+            return updated;
+          }
+          // Fallback if somehow not tracked
+          return new Map(prev).set(cellId, {
+            cellId,
+            modifierId: modifier.id,
+            content: '',
+            prompt: modifier.prompt,
+          });
+        });
+      }
+
+      if (message.type === 'modifierChunk' && message.payload?.cellId && message.payload?.chunk) {
+        const cellId = message.payload.cellId as string;
+        const chunk = message.payload.chunk as string;
+        console.log('[Modifier] Chunk:', { cellId, chunkLength: chunk.length });
+
+        setModifyingCells(prev => {
+          const updated = new Map(prev);
+          const existing = updated.get(cellId);
+          if (existing) {
+            updated.set(cellId, { ...existing, content: existing.content + chunk });
+          } else {
+            console.warn('[Modifier] Chunk received but no modifying cell found for:', cellId);
+          }
+          return updated;
+        });
+      }
+
+      if (message.type === 'modifierComplete' && message.payload?.cellId && message.payload?.modifierId) {
+        const cellId = message.payload.cellId as string;
+        const modifierId = message.payload.modifierId as string;
+        console.log('[Modifier] Complete:', { cellId, modifierId });
+
+        // Use functional updates to get current state and avoid stale closures
+        setModifyingCells(prevModifying => {
+          const modifying = prevModifying.get(cellId);
+          console.log('[Modifier] Complete - modifying state:', { found: !!modifying, content: modifying?.content?.substring(0, 100) });
+          if (!modifying) {
+            console.warn('[Modifier] Complete but no modifying cell found for:', cellId);
+            return prevModifying;
+          }
+
+          const rawContent = modifying.content;
+          const htmlContent = markdownToHtml(rawContent);
+
+          // Create new version with the modified content
+          const newVersionId = crypto.randomUUID();
+          const newVersion: CellVersion = {
+            id: newVersionId,
+            content: htmlContent,
+            modifierIds: [modifierId],
+            createdAt: new Date().toISOString(),
+          };
+
+          // Update cells with new version
+          setCells(prevCells => {
+            const cell = prevCells.find(c => c.id === cellId);
+            if (!cell) return prevCells;
+
+            // Get existing versions or create initial version from current content
+            let existingVersions = cell.versions || [];
+            if (existingVersions.length === 0 && cell.content) {
+              existingVersions = [{
+                id: crypto.randomUUID(),
+                content: cell.content,
+                modifierIds: [],
+                createdAt: cell.createdAt,
+              }];
+            }
+
+            const updatedVersions = [...existingVersions, newVersion];
+
+            // Save to Swift
+            bridge.send({
+              type: 'saveCell',
+              payload: {
+                id: cellId,
+                streamId: stream.id,
+                content: htmlContent,
+                type: cell.type,
+                order: cell.order,
+                modifiers: cell.modifiers,
+                versions: updatedVersions,
+                activeVersionId: newVersionId,
+              },
+            });
+
+            return prevCells.map(c =>
+              c.id === cellId
+                ? {
+                    ...c,
+                    content: htmlContent,
+                    versions: updatedVersions,
+                    activeVersionId: newVersionId,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : c
+            );
+          });
+
+          // Return updated modifying map with this cell removed
+          const updated = new Map(prevModifying);
+          updated.delete(cellId);
+          return updated;
+        });
+      }
+
+      if (message.type === 'modifierError' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const error = message.payload.error as string;
+
+        setErrorCells(prev => new Map(prev).set(cellId, error));
+        setModifyingCells(prev => {
+          const updated = new Map(prev);
+          updated.delete(cellId);
+          return updated;
+        });
+      }
+
     });
     return unsubscribe;
-  }, [stream.id, cells, streamingCells]);
+  }, [stream.id]);
 
   const handleSourceAdded = useCallback((source: SourceReference) => {
     setSources(prev => [...prev, source]);
@@ -122,27 +275,29 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
 
   const handleCellUpdate = useCallback((cellId: string, content: string) => {
     setCells(prev => {
-      const updated = prev.map(c =>
+      const cell = prev.find(c => c.id === cellId);
+      if (cell) {
+        // Save to Swift with all fields preserved
+        bridge.send({
+          type: 'saveCell',
+          payload: {
+            id: cellId,
+            streamId: stream.id,
+            content,
+            type: cell.type,
+            order: cell.order,
+            originalPrompt: cell.originalPrompt,
+            modifiers: cell.modifiers,
+            versions: cell.versions,
+            activeVersionId: cell.activeVersionId,
+          },
+        });
+      }
+      return prev.map(c =>
         c.id === cellId ? { ...c, content, updatedAt: new Date().toISOString() } : c
       );
-      return updated;
     });
-
-    // Save to Swift
-    const cell = cells.find(c => c.id === cellId);
-    if (cell) {
-      bridge.send({
-        type: 'saveCell',
-        payload: {
-          id: cellId,
-          streamId: stream.id,
-          content,
-          type: cell.type,
-          order: cell.order,
-        },
-      });
-    }
-  }, [cells, stream.id]);
+  }, [stream.id]);
 
   // Cmd+Enter: Transform current cell into AI response
   const handleThink = useCallback((cellId: string) => {
@@ -272,6 +427,73 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
       },
     });
   }, [cells, stream.id]);
+
+  // Apply a modifier to an AI cell
+  const handleApplyModifier = useCallback((cellId: string, modifierPrompt: string) => {
+    const cell = cells.find(c => c.id === cellId);
+    if (!cell || cell.type !== 'aiResponse') return;
+
+    // Clear any previous error
+    setErrorCells(prev => {
+      const updated = new Map(prev);
+      updated.delete(cellId);
+      return updated;
+    });
+
+    // Start tracking modifier immediately with the prompt (before server responds)
+    setModifyingCells(prev => new Map(prev).set(cellId, {
+      cellId,
+      modifierId: '', // Will be set when modifierCreated is received
+      content: '',
+      prompt: modifierPrompt,
+    }));
+
+    // Send apply modifier request
+    bridge.send({
+      type: 'applyModifier',
+      payload: {
+        cellId,
+        modifierPrompt,
+        currentContent: stripHtml(cell.content),
+      },
+    });
+  }, [cells]);
+
+  // Select a specific version of an AI cell
+  const handleSelectVersion = useCallback((cellId: string, versionId: string) => {
+    console.log('[Version] Selecting version:', { cellId, versionId });
+    setCells(prev => {
+      const cell = prev.find(c => c.id === cellId);
+      console.log('[Version] Found cell:', { cellId, hasVersions: !!cell?.versions, versionsCount: cell?.versions?.length });
+      if (!cell || !cell.versions) return prev;
+
+      const version = cell.versions.find(v => v.id === versionId);
+      console.log('[Version] Found version:', { versionId, found: !!version, contentLength: version?.content?.length });
+      if (!version) return prev;
+
+      // Save to Swift
+      bridge.send({
+        type: 'saveCell',
+        payload: {
+          id: cellId,
+          streamId: stream.id,
+          content: version.content,
+          type: cell.type,
+          order: cell.order,
+          modifiers: cell.modifiers,
+          versions: cell.versions,
+          activeVersionId: versionId,
+        },
+      });
+
+      console.log('[Version] Updating cell content to version:', versionId);
+      return prev.map(c =>
+        c.id === cellId
+          ? { ...c, content: version.content, activeVersionId: versionId }
+          : c
+      );
+    });
+  }, [stream.id]);
 
   const handleCellDelete = useCallback((cellId: string) => {
     const index = cells.findIndex(c => c.id === cellId);
@@ -422,25 +644,68 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
           </h1>
         )}
         <span className="stream-hint">Cmd+Enter to think with AI</span>
+        <button
+          onClick={() => setShowDeleteConfirm(true)}
+          className="delete-stream-button"
+          title="Delete stream"
+        >
+          Delete
+        </button>
       </header>
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && (
+        <div className="delete-confirm-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="delete-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete this stream?</h2>
+            <p>This will permanently delete "{title}" and all its contents. This cannot be undone.</p>
+            <div className="delete-confirm-actions">
+              <button
+                className="delete-confirm-cancel"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="delete-confirm-delete"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  onDelete();
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="stream-body">
         <div className="stream-content">
           {cells.map((cell, index) => {
             const isStreaming = streamingCells.has(cell.id);
+            const isModifying = modifyingCells.has(cell.id);
+            const modifyingData = modifyingCells.get(cell.id);
             const error = errorCells.get(cell.id);
             const streamingContent = streamingCells.get(cell.id)?.content;
-            // Convert streaming markdown to HTML for display
-            const displayContent = isStreaming && streamingContent
-              ? markdownToHtml(streamingContent)
-              : cell.content;
+            const modifyingContent = modifyingData?.content;
+
+            // Convert streaming/modifying markdown to HTML for display
+            let displayContent = cell.content;
+            if (isStreaming && streamingContent) {
+              displayContent = markdownToHtml(streamingContent);
+            } else if (isModifying && modifyingContent) {
+              displayContent = markdownToHtml(modifyingContent);
+            }
 
             return (
               <div key={cell.id} data-cell-id={cell.id}>
                 <Cell
-                  cell={isStreaming ? { ...cell, content: displayContent } : cell}
+                  cell={(isStreaming || isModifying) ? { ...cell, content: displayContent } : cell}
                   isNew={cell.id === newCellId}
                   isStreaming={isStreaming}
+                  isModifying={isModifying}
+                  pendingModifierPrompt={modifyingData?.prompt}
                   isOnlyCell={cells.length === 1}
                   error={error}
                   onUpdate={(content) => handleCellUpdate(cell.id, content)}
@@ -448,6 +713,8 @@ export function StreamEditor({ stream, onBack }: StreamEditorProps) {
                   onEnter={() => handleCreateCell(index)}
                   onThink={() => handleThink(cell.id)}
                   onRegenerate={(newPrompt) => handleRegenerate(cell.id, newPrompt)}
+                  onApplyModifier={(prompt) => handleApplyModifier(cell.id, prompt)}
+                  onSelectVersion={(versionId) => handleSelectVersion(cell.id, versionId)}
                   onFocusPrevious={() => handleFocusPrevious(index)}
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}

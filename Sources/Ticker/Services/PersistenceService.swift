@@ -81,6 +81,14 @@ final class PersistenceService {
             }
         }
 
+        migrator.registerMigration("v4_modifier_stack") { db in
+            try db.alter(table: "cells") { t in
+                t.add(column: "modifiers_json", .text)
+                t.add(column: "versions_json", .text)
+                t.add(column: "active_version_id", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -117,7 +125,12 @@ final class PersistenceService {
             }
 
             let sourceRows = try Row.fetchAll(db, sql: "SELECT * FROM sources WHERE stream_id = ? ORDER BY added_at", arguments: [id.uuidString])
-            let cellRows = try Row.fetchAll(db, sql: "SELECT * FROM cells WHERE stream_id = ? ORDER BY position", arguments: [id.uuidString])
+            let cellRows = try Row.fetchAll(db, sql: """
+                SELECT id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id
+                FROM cells 
+                WHERE stream_id = ? 
+                ORDER BY position
+            """, arguments: [id.uuidString])
 
             let sources = sourceRows.map { row -> SourceReference in
                 SourceReference(
@@ -142,6 +155,22 @@ final class PersistenceService {
                 let restatement: String? = row["restatement"]
                 let originalPrompt: String? = row["original_prompt"]
 
+                // Decode modifier stack fields
+                var modifiers: [Modifier]? = nil
+                if let modifiersJson: String = row["modifiers_json"] {
+                    modifiers = try JSONDecoder().decode([Modifier].self, from: Data(modifiersJson.utf8))
+                }
+
+                var versions: [CellVersion]? = nil
+                if let versionsJson: String = row["versions_json"] {
+                    versions = try JSONDecoder().decode([CellVersion].self, from: Data(versionsJson.utf8))
+                }
+
+                var activeVersionId: UUID? = nil
+                if let activeVersionIdStr: String = row["active_version_id"] {
+                    activeVersionId = UUID(uuidString: activeVersionIdStr)
+                }
+
                 return Cell(
                     id: UUID(uuidString: row["id"])!,
                     streamId: UUID(uuidString: row["stream_id"])!,
@@ -152,7 +181,10 @@ final class PersistenceService {
                     sourceBinding: sourceBinding,
                     order: row["position"],
                     createdAt: Date(timeIntervalSince1970: row["created_at"]),
-                    updatedAt: Date(timeIntervalSince1970: row["updated_at"])
+                    updatedAt: Date(timeIntervalSince1970: row["updated_at"]),
+                    modifiers: modifiers,
+                    versions: versions,
+                    activeVersionId: activeVersionId
                 )
             }
 
@@ -206,19 +238,43 @@ final class PersistenceService {
 
             let metadataJson = "{}"  // Simplified for now
 
+            // Encode modifier stack fields
+            let modifiersJson: String?
+            if let modifiers = cell.modifiers {
+                modifiersJson = String(data: try JSONEncoder().encode(modifiers), encoding: .utf8)
+            } else {
+                modifiersJson = nil
+            }
+
+            let versionsJson: String?
+            if let versions = cell.versions {
+                versionsJson = String(data: try JSONEncoder().encode(versions), encoding: .utf8)
+            } else {
+                versionsJson = nil
+            }
+
+            let activeVersionIdStr = cell.activeVersionId?.uuidString
+
             try db.execute(
                 sql: """
-                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         content = excluded.content,
                         restatement = excluded.restatement,
-                        original_prompt = excluded.original_prompt,
+                        original_prompt = CASE 
+                            WHEN excluded.type = 'aiResponse' AND excluded.original_prompt IS NULL 
+                            THEN cells.original_prompt 
+                            ELSE excluded.original_prompt 
+                        END,
                         type = excluded.type,
                         state = excluded.state,
                         source_binding_json = excluded.source_binding_json,
                         updated_at = excluded.updated_at,
-                        position = excluded.position
+                        position = excluded.position,
+                        modifiers_json = excluded.modifiers_json,
+                        versions_json = excluded.versions_json,
+                        active_version_id = excluded.active_version_id
                 """,
                 arguments: [
                     cell.id.uuidString,
@@ -232,7 +288,10 @@ final class PersistenceService {
                     metadataJson,
                     cell.createdAt.timeIntervalSince1970,
                     cell.updatedAt.timeIntervalSince1970,
-                    cell.order
+                    cell.order,
+                    modifiersJson,
+                    versionsJson,
+                    activeVersionIdStr
                 ]
             )
 

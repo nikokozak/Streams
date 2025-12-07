@@ -1,5 +1,45 @@
 import Foundation
 
+/// A single modification in the modifier chain
+struct Modifier: Identifiable, Codable {
+    let id: UUID
+    var prompt: String      // Full prompt text ("make it shorter")
+    var label: String       // AI-generated 1-3 word summary ("shorter")
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        prompt: String,
+        label: String,
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.prompt = prompt
+        self.label = label
+        self.createdAt = createdAt
+    }
+}
+
+/// A version of content produced by the modifier chain
+struct CellVersion: Identifiable, Codable {
+    let id: UUID
+    var content: String         // HTML content for this version
+    var modifierIds: [UUID]     // Which modifiers produced this
+    let createdAt: Date
+
+    init(
+        id: UUID = UUID(),
+        content: String,
+        modifierIds: [UUID],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.content = content
+        self.modifierIds = modifierIds
+        self.createdAt = createdAt
+    }
+}
+
 /// A unit of content within a stream
 struct Cell: Identifiable, Codable {
     let id: UUID
@@ -14,6 +54,12 @@ struct Cell: Identifiable, Codable {
     var order: Int
     let createdAt: Date
     var updatedAt: Date
+    /// Modifier chain - prompts that have been applied to transform content
+    var modifiers: [Modifier]?
+    /// Content versions - each modifier produces a new version
+    var versions: [CellVersion]?
+    /// Currently displayed version (if not set, show latest)
+    var activeVersionId: UUID?
 
     init(
         id: UUID = UUID(),
@@ -25,7 +71,10 @@ struct Cell: Identifiable, Codable {
         sourceBinding: SourceBinding? = nil,
         order: Int = 0,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        modifiers: [Modifier]? = nil,
+        versions: [CellVersion]? = nil,
+        activeVersionId: UUID? = nil
     ) {
         self.id = id
         self.streamId = streamId
@@ -37,6 +86,9 @@ struct Cell: Identifiable, Codable {
         self.order = order
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.modifiers = modifiers
+        self.versions = versions
+        self.activeVersionId = activeVersionId
     }
 }
 

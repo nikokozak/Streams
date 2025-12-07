@@ -132,6 +132,12 @@ final class WebViewManager: NSObject {
             }
             do {
                 if let stream = try persistence.loadStream(id: id) {
+                    // Debug: log cell info
+                    for cell in stream.cells {
+                        if cell.type == .aiResponse {
+                            print("[Stream Load] AI Cell \(cell.id): originalPrompt=\(cell.originalPrompt ?? "nil"), versions=\(cell.versions?.count ?? 0), modifiers=\(cell.modifiers?.count ?? 0)")
+                        }
+                    }
                     let streamPayload = encodeStream(stream)
                     bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
                 }
@@ -206,6 +212,13 @@ final class WebViewManager: NSObject {
             }
             do {
                 let cell = try decodeCell(from: payload)
+                // Debug logging
+                if let versions = cell.versions, !versions.isEmpty {
+                    print("[SaveCell] Cell \(cell.id) saving with \(versions.count) versions")
+                }
+                if let modifiers = cell.modifiers, !modifiers.isEmpty {
+                    print("[SaveCell] Cell \(cell.id) saving with \(modifiers.count) modifiers")
+                }
                 try persistence.saveCell(cell)
                 bridgeService.send(BridgeMessage(type: "cellSaved", payload: ["id": AnyCodable(cell.id.uuidString)]))
             } catch {
@@ -360,6 +373,94 @@ final class WebViewManager: NSObject {
                 )
             }
 
+        case "applyModifier":
+            guard let payload = message.payload,
+                  let cellId = payload["cellId"]?.value as? String,
+                  let modifierPrompt = payload["modifierPrompt"]?.value as? String,
+                  let currentContent = payload["currentContent"]?.value as? String else {
+                print("[Modifier] Invalid applyModifier payload")
+                return
+            }
+
+            print("[Modifier] Received request - cellId: \(cellId), prompt: \(modifierPrompt.prefix(50))")
+
+            // Check if configured
+            guard aiService.isConfigured else {
+                print("[Modifier] Error: API not configured")
+                bridgeService.send(BridgeMessage(
+                    type: "modifierError",
+                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured.")]
+                ))
+                return
+            }
+
+            // First, generate a short label for the modifier
+            var modifierLabel = ""
+            do {
+                modifierLabel = try await generateModifierLabel(prompt: modifierPrompt)
+                print("[Modifier] Generated label: \(modifierLabel)")
+            } catch {
+                print("[Modifier] Label generation failed: \(error), using truncated prompt")
+                modifierLabel = String(modifierPrompt.prefix(20))
+            }
+
+            // Create the modifier
+            let modifierId = UUID()
+            let modifier: [String: Any] = [
+                "id": modifierId.uuidString,
+                "prompt": modifierPrompt,
+                "label": modifierLabel,
+                "createdAt": ISO8601DateFormatter().string(from: Date())
+            ]
+
+            // Send modifier created event
+            print("[Modifier] Sending modifierCreated event")
+            bridgeService.send(BridgeMessage(
+                type: "modifierCreated",
+                payload: ["cellId": AnyCodable(cellId), "modifier": AnyCodable(modifier)]
+            ))
+
+            // Track chunks for debugging
+            var chunkCount = 0
+            var totalContent = ""
+
+            // Define callbacks for streaming
+            let onChunk: (String) -> Void = { [weak self] chunk in
+                chunkCount += 1
+                totalContent += chunk
+                if chunkCount <= 3 || chunkCount % 10 == 0 {
+                    print("[Modifier] Chunk #\(chunkCount), total length: \(totalContent.count)")
+                }
+                self?.bridgeService.send(BridgeMessage(
+                    type: "modifierChunk",
+                    payload: ["cellId": AnyCodable(cellId), "modifierId": AnyCodable(modifierId.uuidString), "chunk": AnyCodable(chunk)]
+                ))
+            }
+            let onComplete: () -> Void = { [weak self] in
+                print("[Modifier] Complete - received \(chunkCount) chunks, total content length: \(totalContent.count)")
+                self?.bridgeService.send(BridgeMessage(
+                    type: "modifierComplete",
+                    payload: ["cellId": AnyCodable(cellId), "modifierId": AnyCodable(modifierId.uuidString)]
+                ))
+            }
+            let onError: (Error) -> Void = { [weak self] error in
+                print("[Modifier] Error: \(error.localizedDescription)")
+                self?.bridgeService.send(BridgeMessage(
+                    type: "modifierError",
+                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable(error.localizedDescription)]
+                ))
+            }
+
+            // Apply the modifier using AI
+            print("[Modifier] Starting AI request")
+            aiService.applyModifier(
+                currentContent: currentContent,
+                modifierPrompt: modifierPrompt,
+                onChunk: onChunk,
+                onComplete: onComplete,
+                onError: onError
+            )
+
         case "exportMarkdown":
             // TODO: Export stream
             break
@@ -441,6 +542,30 @@ final class WebViewManager: NSObject {
                 if let originalPrompt = cell.originalPrompt {
                     dict["originalPrompt"] = originalPrompt
                 }
+                // Modifier stack fields
+                if let modifiers = cell.modifiers, !modifiers.isEmpty {
+                    dict["modifiers"] = modifiers.map { modifier -> [String: Any] in
+                        [
+                            "id": modifier.id.uuidString,
+                            "prompt": modifier.prompt,
+                            "label": modifier.label,
+                            "createdAt": formatter.string(from: modifier.createdAt)
+                        ]
+                    }
+                }
+                if let versions = cell.versions, !versions.isEmpty {
+                    dict["versions"] = versions.map { version -> [String: Any] in
+                        [
+                            "id": version.id.uuidString,
+                            "content": version.content,
+                            "modifierIds": version.modifierIds.map { $0.uuidString },
+                            "createdAt": formatter.string(from: version.createdAt)
+                        ]
+                    }
+                }
+                if let activeVersionId = cell.activeVersionId {
+                    dict["activeVersionId"] = activeVersionId.uuidString
+                }
                 return dict
             },
             "createdAt": formatter.string(from: stream.createdAt),
@@ -467,6 +592,11 @@ final class WebViewManager: NSObject {
         return dict
     }
 
+    /// Generate a short label for a modifier prompt using AI
+    private func generateModifierLabel(prompt: String) async throws -> String {
+        return try await aiService.generateLabel(for: prompt)
+    }
+
     private func decodeCell(from payload: [String: AnyCodable]) throws -> Cell {
         guard let idValue = payload["id"]?.value as? String,
               let id = UUID(uuidString: idValue),
@@ -482,6 +612,35 @@ final class WebViewManager: NSObject {
         let restatement = payload["restatement"]?.value as? String
         let originalPrompt = payload["originalPrompt"]?.value as? String
 
+        // Decode modifier stack fields
+        var modifiers: [Modifier]? = nil
+        if let modifiersRaw = payload["modifiers"]?.value as? [[String: Any]] {
+            modifiers = modifiersRaw.compactMap { dict -> Modifier? in
+                guard let idStr = dict["id"] as? String,
+                      let modId = UUID(uuidString: idStr),
+                      let prompt = dict["prompt"] as? String,
+                      let label = dict["label"] as? String else { return nil }
+                return Modifier(id: modId, prompt: prompt, label: label)
+            }
+        }
+
+        var versions: [CellVersion]? = nil
+        if let versionsRaw = payload["versions"]?.value as? [[String: Any]] {
+            versions = versionsRaw.compactMap { dict -> CellVersion? in
+                guard let idStr = dict["id"] as? String,
+                      let verId = UUID(uuidString: idStr),
+                      let verContent = dict["content"] as? String,
+                      let modifierIdsRaw = dict["modifierIds"] as? [String] else { return nil }
+                let modifierIds = modifierIdsRaw.compactMap { UUID(uuidString: $0) }
+                return CellVersion(id: verId, content: verContent, modifierIds: modifierIds)
+            }
+        }
+
+        var activeVersionId: UUID? = nil
+        if let activeVersionIdStr = payload["activeVersionId"]?.value as? String {
+            activeVersionId = UUID(uuidString: activeVersionIdStr)
+        }
+
         return Cell(
             id: id,
             streamId: streamId,
@@ -489,7 +648,10 @@ final class WebViewManager: NSObject {
             restatement: restatement,
             originalPrompt: originalPrompt,
             type: type,
-            order: order
+            order: order,
+            modifiers: modifiers,
+            versions: versions,
+            activeVersionId: activeVersionId
         )
     }
 }

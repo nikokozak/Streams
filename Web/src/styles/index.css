@@ -354,6 +354,115 @@ body {
   margin-left: auto;
 }
 
+/* Delete stream button */
+.delete-stream-button {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-tertiary);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.delete-stream-button:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Delete confirmation dialog */
+.delete-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: overlay-enter 0.15s ease;
+}
+
+@keyframes overlay-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.delete-confirm-dialog {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  max-width: 400px;
+  width: 90%;
+  box-shadow: var(--shadow-lg);
+  animation: dialog-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes dialog-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.delete-confirm-dialog h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+.delete-confirm-dialog p {
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-lg) 0;
+  line-height: var(--line-height-relaxed);
+}
+
+.delete-confirm-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  justify-content: flex-end;
+}
+
+.delete-confirm-cancel {
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.delete-confirm-cancel:hover {
+  background: var(--color-bg-secondary);
+  border-color: var(--color-text-tertiary);
+}
+
+.delete-confirm-delete {
+  background: var(--color-error);
+  border: none;
+  color: white;
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.delete-confirm-delete:hover {
+  background: #dc2626;
+}
+
 .back-button {
   display: flex;
   align-items: center;
@@ -403,22 +512,38 @@ body {
   /* Subtle indication without background change */
 }
 
-/* AI Response - gentle left accent */
+/* AI Response - circle indicator button */
 .cell--ai {
   padding-left: calc(var(--spacing-xl) + var(--spacing-md));
   position: relative;
 }
 
-.cell--ai::before {
-  content: '';
+/* Circle indicator - clickable button to open modifier menu */
+.cell-circle-indicator {
   position: absolute;
-  left: var(--spacing-xl);
-  top: var(--spacing-lg);
-  bottom: var(--spacing-lg);
-  width: 2px;
-  background: var(--color-accent);
-  border-radius: 1px;
-  opacity: 0.5;
+  left: calc(var(--spacing-xl) - 4px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-text-tertiary);
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.3;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.cell:hover .cell-circle-indicator,
+.cell-circle-indicator:focus,
+.cell--menu-open .cell-circle-indicator {
+  opacity: 1;
+}
+
+.cell-circle-indicator:focus {
+  outline: none;
 }
 
 /* Quote cells */
@@ -519,7 +644,7 @@ body {
 .cell-prompt-drawer {
   display: flex;
   gap: var(--spacing-sm);
-  margin-top: var(--spacing-xs);
+  margin-bottom: var(--spacing-sm);
   padding: var(--spacing-sm);
   background: var(--color-bg-tertiary);
   border-radius: var(--radius-md);
@@ -578,6 +703,180 @@ body {
 .cell-prompt-regenerate:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+/* ==================== Modifier Menu ==================== */
+
+/* Inline menu that pushes cell content down */
+.modifier-menu {
+  margin-bottom: var(--spacing-sm);
+  padding-bottom: var(--spacing-xs);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.modifier-menu-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.modifier-menu-version {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-tertiary);
+  background: var(--color-surface-hover);
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.modifier-menu-version:hover {
+  background: var(--color-surface-active);
+  color: var(--color-text-secondary);
+}
+
+.modifier-menu-version--active {
+  background: var(--color-accent);
+  color: white;
+}
+
+.modifier-menu-version--active:hover {
+  background: var(--color-accent-hover);
+  color: white;
+}
+
+.modifier-menu-version--pending {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.modifier-menu-row--active {
+  background: var(--color-accent-soft);
+  margin: 0 calc(-1 * var(--spacing-xs));
+  padding: 0 var(--spacing-xs);
+  border-radius: var(--radius-sm);
+}
+
+.modifier-menu-text {
+  flex: 1;
+  cursor: text;
+  padding: 2px var(--spacing-xs);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  transition: background 0.15s ease;
+}
+
+.modifier-menu-text:hover {
+  background: var(--color-surface-hover);
+}
+
+.modifier-menu-text--pending {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
+.modifier-menu-text--pending:hover {
+  background: transparent;
+}
+
+.modifier-menu-input {
+  flex: 1;
+  background: var(--color-bg);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--spacing-xs);
+  font-family: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  outline: none;
+}
+
+.modifier-menu-input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+.modifier-menu-regenerate {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.modifier-menu-regenerate:hover {
+  color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.modifier-menu-arrow {
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  line-height: 1;
+  padding: 1px 0;
+}
+
+.modifier-menu-add {
+  width: 100%;
+  padding: var(--spacing-xs);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-tertiary);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  margin-top: var(--spacing-xs);
+  transition: all 0.15s ease;
+}
+
+.modifier-menu-add:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-surface-hover);
+}
+
+.modifier-menu-add-form {
+  margin-top: 1px;
+}
+
+.modifier-menu-pending {
+  opacity: 0.7;
+}
+
+/* Processing state with spinner */
+.modifier-menu-processing {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.modifier-menu-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spinner-rotate 0.8s linear infinite;
+}
+
+@keyframes spinner-rotate {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ==================== Cell Editor / TipTap ==================== */
