@@ -2,9 +2,11 @@ import { useRef, useCallback, useEffect } from 'react';
 import { useState } from 'react';
 import { Stream, Cell as CellType, SourceReference, Modifier, CellVersion, bridge } from '../types';
 import { Cell } from './Cell';
+import { BlockWrapper } from './BlockWrapper';
 import { SourcePanel } from './SourcePanel';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
+import { useBlockFocus } from '../hooks/useBlockFocus';
 
 // Strip HTML tags to get plain text
 function stripHtml(html: string): string {
@@ -483,6 +485,11 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     }
   }, [store]);
 
+  // Block focus management for keyboard navigation
+  useBlockFocus({
+    onDeleteBlock: handleCellDelete,
+  });
+
   const handleCreateCell = useCallback((afterIndex: number) => {
     const newCell: CellType = {
       id: crypto.randomUUID(),
@@ -648,7 +655,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
             }
 
             return (
-              <div key={cell.id} data-cell-id={cell.id}>
+              <BlockWrapper key={cell.id} id={cell.id}>
                 <Cell
                   cell={(isStreaming || isModifying || isRefreshing) ? { ...cell, content: displayContent } : cell}
                   isNew={cell.id === newBlockId}
@@ -669,7 +676,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}
                 />
-              </div>
+              </BlockWrapper>
             );
           })}
         </div>

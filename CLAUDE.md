@@ -44,12 +44,17 @@ Web/src/
 ├── components/
 │   ├── StreamEditor.tsx         # Main editor
 │   ├── Cell.tsx                 # Dual-representation cells
+│   ├── BlockWrapper.tsx         # Hover controls, drag handle
 │   ├── CellEditor.tsx           # TipTap wrapper
 │   ├── SourcePanel.tsx          # Source sidebar
 │   └── Settings.tsx             # API keys, routing toggle
+├── hooks/
+│   └── useBlockFocus.ts         # Keyboard navigation between blocks
 ├── store/
 │   └── blockStore.ts            # Zustand state (cells, streaming, errors)
-├── utils/markdown.ts            # Markdown → HTML
+├── utils/
+│   ├── markdown.ts              # Markdown → HTML
+│   └── references.ts            # @block-xxxx parsing
 ├── types/models.ts              # TypeScript types
 └── styles/index.css
 ```

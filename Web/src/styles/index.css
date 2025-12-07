@@ -493,19 +493,99 @@ body {
   padding: var(--spacing-md) 0 var(--spacing-xxl) 0;
 }
 
+/* ==================== Block Wrapper ==================== */
+
+.block-wrapper {
+  position: relative;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.block-wrapper + .block-wrapper {
+  margin-top: 2px;
+}
+
+.block-wrapper--dragging {
+  opacity: 0.5;
+}
+
+.block-wrapper--hovered > .block-content > .cell {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Block controls - appear on hover */
+.block-controls {
+  position: absolute;
+  left: -36px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.block-controls--visible {
+  opacity: 1;
+}
+
+.block-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
+}
+
+.block-drag-handle:hover {
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.block-drag-handle:active {
+  cursor: grabbing;
+}
+
+.block-indicator {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.block-indicator--live {
+  color: var(--color-accent);
+}
+
+.block-indicator--dependent {
+  color: var(--color-text-tertiary);
+}
+
+.block-content {
+  /* Wrapper for cell content */
+}
+
 /* ==================== Cells ==================== */
 
 .cell {
   max-width: 680px;
   margin: 0 auto;
-  padding: var(--spacing-lg) var(--spacing-xl);
+  padding: var(--spacing-md) var(--spacing-lg);
   position: relative;
-  transition: all 0.15s ease;
+  transition: background 0.15s ease;
+  border-radius: var(--radius-sm);
 }
 
-/* No borders between cells - use space */
+/* Tighter spacing between cells for document feel */
 .cell + .cell {
-  margin-top: var(--spacing-md);
+  margin-top: 0;
 }
 
 .cell:hover {
