@@ -9,6 +9,9 @@ protocol LLMProvider {
     /// Human-readable name for display
     var name: String { get }
 
+    /// The specific model ID used by this provider (e.g., "gpt-4o", "sonar")
+    var modelId: String { get }
+
     /// Whether the provider is properly configured (API key set, etc.)
     var isConfigured: Bool { get }
 

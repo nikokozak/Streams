@@ -35,11 +35,18 @@ export function CellEditor({
   // Track if change originated from user typing (to avoid cursor reset)
   const isLocalChange = useRef(false);
 
-  // Get cells for reference suggestions (exclude current cell)
+  // Get cells for reference suggestions (exclude current cell and empty spacing cells)
   const getCells = useMemo(() => {
     return (): Cell[] => {
       const blocks = useBlockStore.getState().getBlocksArray();
-      return cellId ? blocks.filter((b) => b.id !== cellId) : blocks;
+      return blocks.filter((b) => {
+        // Exclude current cell
+        if (cellId && b.id === cellId) return false;
+        // Exclude empty cells (spacing blocks)
+        const textContent = b.content.replace(/<[^>]*>/g, '').trim();
+        if (textContent.length === 0) return false;
+        return true;
+      });
     };
   }, [cellId]);
 
@@ -90,9 +97,11 @@ export function CellEditor({
         }
 
         // Enter at end of content - create new cell
+        // For empty cells, always allow Enter. For non-empty, check if at end.
         if (event.key === 'Enter' && !event.shiftKey) {
-          const isAtEnd = $anchor.pos === state.doc.content.size - 1;
-          if (isAtEnd && onEnter) {
+          const isEmpty = state.doc.textContent.length === 0;
+          const isAtEnd = $anchor.pos >= state.doc.content.size - 1;
+          if ((isEmpty || isAtEnd) && onEnter) {
             event.preventDefault();
             onEnter();
             return true;
@@ -111,9 +120,11 @@ export function CellEditor({
         }
 
         // Arrow up at start - focus previous cell
+        // For empty cells, always navigate. For non-empty, check if at start.
         if (event.key === 'ArrowUp' && empty) {
-          const isAtStart = $anchor.pos === 1;
-          if (isAtStart && onArrowUp) {
+          const isEmpty = state.doc.textContent.length === 0;
+          const isAtStart = $anchor.pos <= 1;
+          if ((isEmpty || isAtStart) && onArrowUp) {
             event.preventDefault();
             onArrowUp();
             return true;
@@ -121,9 +132,11 @@ export function CellEditor({
         }
 
         // Arrow down at end - focus next cell
+        // For empty cells, always navigate. For non-empty, check if at end.
         if (event.key === 'ArrowDown' && empty) {
-          const isAtEnd = $anchor.pos === state.doc.content.size - 1;
-          if (isAtEnd && onArrowDown) {
+          const isEmpty = state.doc.textContent.length === 0;
+          const isAtEnd = $anchor.pos >= state.doc.content.size - 1;
+          if ((isEmpty || isAtEnd) && onArrowDown) {
             event.preventDefault();
             onArrowDown();
             return true;

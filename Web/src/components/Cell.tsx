@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Cell as CellType } from '../types';
 import { CellEditor } from './CellEditor';
-import { ModifierMenu } from './ModifierMenu';
-import { VersionDropdown } from './VersionDropdown';
 import { useBlockStore } from '../store/blockStore';
 import { findByShortIdOrName } from '../utils/references';
 
@@ -10,48 +8,41 @@ interface CellProps {
   cell: CellType;
   isNew?: boolean;
   isStreaming?: boolean;
-  isModifying?: boolean;
   isRefreshing?: boolean;
-  pendingModifierPrompt?: string;
-  isOnlyCell?: boolean;
+  isFirstEmptyCell?: boolean; // Show placeholder only for first cell of empty document
   error?: string;
   onUpdate: (content: string) => void;
   onDelete: () => void;
   onEnter: () => void;
   onThink: () => void;
-  onRegenerate?: (newPrompt: string) => void;
-  onApplyModifier?: (prompt: string) => void;
-  onSelectVersion?: (versionId: string) => void;
   onFocusPrevious: () => void;
   onFocusNext: () => void;
   registerFocus: (focus: () => void) => void;
   onScrollToCell?: (cellId: string) => void;
+  onOpenOverlay?: () => void;
+  onToggleLive?: (isLive: boolean) => void;
 }
 
 export function Cell({
   cell,
   isNew = false,
   isStreaming = false,
-  isModifying = false,
   isRefreshing = false,
-  pendingModifierPrompt,
-  isOnlyCell = false,
+  isFirstEmptyCell = false,
   error,
   onUpdate,
   onDelete,
   onEnter,
   onThink,
-  onRegenerate,
-  onApplyModifier,
-  onSelectVersion,
   onFocusPrevious,
   onFocusNext,
   registerFocus,
   onScrollToCell,
+  onOpenOverlay,
+  onToggleLive,
 }: CellProps) {
   const [localContent, setLocalContent] = useState(cell.content);
   const [isFocused, setIsFocused] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const saveTimeoutRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -102,12 +93,6 @@ export function Cell({
     [onScrollToCell]
   );
 
-  // Check if content is empty (strip HTML tags for check)
-  const isContentEmpty = (content: string) => {
-    const text = content.replace(/<[^>]*>/g, '').trim();
-    return text.length === 0;
-  };
-
   // Trim trailing empty paragraphs from HTML content
   const trimEmptyLines = (html: string): string => {
     return html.replace(/(<p>(\s|<br\s*\/?>)*<\/p>\s*)+$/gi, '');
@@ -148,7 +133,7 @@ export function Cell({
     useBlockStore.getState().setFocus(cell.id);
   };
 
-  // Handle blur - save and prune if empty
+  // Handle blur - save content (empty cells persist like Notion for spacing)
   const handleBlur = (e: React.FocusEvent) => {
     // Check if focus is moving to another element within the same cell
     if (containerRef.current?.contains(e.relatedTarget as Node)) {
@@ -166,12 +151,6 @@ export function Cell({
         setIsFocused(false);
         useBlockStore.getState().setFocus(null);
         saveNow();
-
-        if (!isOnlyCell && cell.type !== 'aiResponse' && isContentEmpty(localContent)) {
-          setTimeout(() => {
-            onDelete();
-          }, 50);
-        }
       });
       return;
     }
@@ -179,29 +158,7 @@ export function Cell({
     setIsFocused(false);
     useBlockStore.getState().setFocus(null);
     saveNow();
-
-    // Auto-prune empty cells (unless it's the only cell or an AI cell)
-    if (!isOnlyCell && cell.type !== 'aiResponse' && isContentEmpty(localContent)) {
-      // Small delay to let any other operations complete
-      setTimeout(() => {
-        onDelete();
-      }, 50);
-    }
   };
-
-  // Close menu when clicking outside the cell
-  useEffect(() => {
-    if (!isMenuOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setIsMenuOpen(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [isMenuOpen]);
 
   // Handle delete - save first, then delete
   const handleBackspaceEmpty = () => {
@@ -225,17 +182,16 @@ export function Cell({
     };
   }, []);
 
-  // Sync local content with cell prop (for streaming updates and version changes)
+  // Sync local content with cell prop (for streaming updates)
   useEffect(() => {
-    // Always sync when content changes from outside (streaming, modifying, or version switch)
     // For AI cells, always sync since user doesn't edit them directly
     // For text cells, only sync if not focused (to avoid interrupting typing)
     const isAiCell = cell.type === 'aiResponse';
-    const shouldSync = isStreaming || isModifying || isAiCell || !isFocused;
+    const shouldSync = isStreaming || isAiCell || !isFocused;
     if (shouldSync) {
       setLocalContent(cell.content);
     }
-  }, [cell.content, cell.type, isStreaming, isModifying, isFocused]);
+  }, [cell.content, cell.type, isStreaming, isFocused]);
 
   const cellTypeClass = cell.type === 'aiResponse'
     ? 'cell--ai'
@@ -251,92 +207,40 @@ export function Cell({
   // AI cells always show content, with restatement as a header above
   const showRestatementView = hasRestatement && !isFocused && !isNew && cell.type === 'text';
 
-  // Modifier state
-  const modifiers = cell.modifiers || [];
   const isAiCell = cell.type === 'aiResponse';
-
-  // Handle regenerating from the original prompt (clears all modifiers)
-  const handleRegenerateFromOriginal = (newPrompt: string) => {
-    if (onRegenerate) {
-      onRegenerate(newPrompt);
-      setIsMenuOpen(false);
-    }
-  };
-
-  // Handle regenerating from a specific modifier index
-  const handleRegenerateFromModifier = (_modifierIndex: number, newPrompt: string) => {
-    // For now, we just apply the modifier as a new one
-    // TODO: In the future, we could re-apply from that point
-    if (onApplyModifier) {
-      onApplyModifier(newPrompt);
-      setIsMenuOpen(false);
-    }
-  };
-
-  // Handle adding a new modifier
-  const handleAddModifier = (prompt: string) => {
-    if (onApplyModifier) {
-      onApplyModifier(prompt);
-      // Keep menu open to show processing state
-      setIsMenuOpen(true);
-    }
-  };
-
-  // Handle version selection
-  const handleSelectVersion = (versionId: string) => {
-    if (onSelectVersion) {
-      onSelectVersion(versionId);
-    }
-  };
-
-  // Track if we're waiting for AI response (triggered but no content yet)
-  const isWaitingForResponse = isStreaming && !cell.content;
-
-  // Versions for display
-  const versions = cell.versions || [];
+  const isLive = cell.processingConfig?.refreshTrigger === 'onStreamOpen';
 
   return (
     <div
       ref={containerRef}
-      className={`cell ${cellTypeClass} ${streamingClass} ${refreshingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isMenuOpen ? 'cell--menu-open' : ''}`}
+      className={`cell ${cellTypeClass} ${streamingClass} ${refreshingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''}`}
       onBlur={handleBlur}
       onFocus={handleFocus}
       onClick={handleReferenceClick}
     >
-      {/* AI cell controls - circle for modifier menu, version dropdown for quick switching */}
+      {/* Hover metadata badge for AI cells */}
       {isAiCell && !isStreaming && (
-        <div className="cell-ai-controls">
+        <div className="cell-meta-badge">
+          <span
+            className="cell-meta-badge-label"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenOverlay?.();
+            }}
+          >
+            {cell.modelId || 'AI'}
+          </span>
           <button
-            className="cell-circle-indicator"
-            onClick={() => setIsMenuOpen(!isMenuOpen)}
-            aria-label="Modifier menu"
-          />
-          {versions.length > 1 && (
-            <VersionDropdown
-              versions={versions}
-              activeVersionId={cell.activeVersionId}
-              onSelectVersion={handleSelectVersion}
-            />
-          )}
+            className={`cell-meta-live-toggle ${isLive ? 'cell-meta-live-toggle--active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleLive?.(!isLive);
+            }}
+            title={isLive ? 'Live (click to disable)' : 'Click to make live'}
+          >
+            ⚡
+          </button>
         </div>
-      )}
-
-      {/* Modifier menu - inline above cell content, pushes content down */}
-      {/* Show when: menu is open OR waiting for initial response (no content yet) */}
-      {isAiCell && (isMenuOpen || isWaitingForResponse) && cell.originalPrompt && (
-        <ModifierMenu
-          originalPrompt={cell.originalPrompt}
-          modifiers={modifiers}
-          versions={versions}
-          activeVersionId={cell.activeVersionId}
-          isProcessing={isWaitingForResponse || isModifying}
-          pendingModifierPrompt={pendingModifierPrompt}
-          onClose={() => setIsMenuOpen(false)}
-          onRegenerateFromOriginal={handleRegenerateFromOriginal}
-          onRegenerateFromModifier={handleRegenerateFromModifier}
-          onAddModifier={handleAddModifier}
-          onSelectVersion={handleSelectVersion}
-        />
       )}
 
       {error ? (
@@ -371,8 +275,8 @@ export function Cell({
           )}
           <CellEditor
             content={localContent}
-            autoFocus={!isMenuOpen && (isNew || (hasRestatement && isFocused))}
-            placeholder={cell.type === 'aiResponse' ? '' : 'Write your thoughts...'}
+            autoFocus={isNew || (hasRestatement && isFocused)}
+            placeholder={isFirstEmptyCell ? 'Write your thoughts...' : ''}
             cellId={cell.id}
             onChange={handleChange}
             onEnter={onEnter}

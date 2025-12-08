@@ -44,6 +44,8 @@ export interface Cell {
   references?: string[];
   /** Short name for @mentions (e.g., "nasdaq" for @block-nasdaq) */
   blockName?: string;
+  /** ID of the model that generated this response (e.g., "gpt-4o", "sonar") */
+  modelId?: string;
 }
 
 /** The type of cell content */

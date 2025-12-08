@@ -1,10 +1,10 @@
-import { useRef, useCallback, useEffect } from 'react';
-import { useState } from 'react';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { Stream, Cell as CellType, SourceReference, Modifier, CellVersion, bridge } from '../types';
 import { Cell } from './Cell';
 import { BlockWrapper } from './BlockWrapper';
 import { SourcePanel } from './SourcePanel';
 import { ReferencePreview } from './ReferencePreview';
+import { CellOverlay } from './CellOverlay';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 import { useBlockFocus } from '../hooks/useBlockFocus';
@@ -14,6 +14,11 @@ function stripHtml(html: string): string {
   const tmp = document.createElement('div');
   tmp.innerHTML = html;
   return tmp.textContent || tmp.innerText || '';
+}
+
+// Check if cell content is empty (for filtering spacing cells from context)
+function isEmptyCell(content: string): boolean {
+  return stripHtml(content).trim().length === 0;
 }
 
 interface StreamEditorProps {
@@ -31,6 +36,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   const [title, setTitle] = useState(stream.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [overlayBlockId, setOverlayBlockId] = useState<string | null>(null);
 
   const cellFocusRefs = useRef<Map<string, () => void>>(new Map());
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -71,6 +77,76 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [store.streamId, stream.id]);
 
+  // Track if we've done initial load (for pruning trailing empties only on load)
+  const hasInitializedRef = useRef(false);
+
+  // Ensure at least one trailing empty cell exists
+  // - On initial load: prune extra trailing empty cells to just one
+  // - During editing: only add if there's no trailing empty (user can create many by pressing Enter)
+  useEffect(() => {
+    if (store.streamId !== stream.id) return;
+
+    const blocks = store.getBlocksArray();
+    if (blocks.length === 0) return;
+
+    // Count trailing empty cells
+    let trailingEmptyCount = 0;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (isEmptyCell(blocks[i].content) && blocks[i].type === 'text') {
+        trailingEmptyCount++;
+      } else {
+        break;
+      }
+    }
+
+    // If no trailing empty cell, add one (always, during editing or initial load)
+    if (trailingEmptyCount === 0) {
+      const lastBlock = blocks[blocks.length - 1];
+      const newCell: CellType = {
+        id: crypto.randomUUID(),
+        streamId: stream.id,
+        content: '',
+        type: 'text',
+        sourceBinding: null,
+        order: lastBlock.order + 1,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      store.addBlock(newCell, lastBlock.id);
+      bridge.send({
+        type: 'saveCell',
+        payload: {
+          id: newCell.id,
+          streamId: stream.id,
+          content: '',
+          type: 'text',
+          order: newCell.order,
+        },
+      });
+    }
+    // Only prune extra trailing empty cells on initial load, not during editing
+    // This allows users to create spacing by pressing Enter multiple times
+    else if (trailingEmptyCount > 1 && !hasInitializedRef.current) {
+      // Delete all but the last trailing empty cell
+      for (let i = blocks.length - trailingEmptyCount; i < blocks.length - 1; i++) {
+        const cellToDelete = blocks[i];
+        store.deleteBlock(cellToDelete.id);
+        bridge.send({ type: 'deleteCell', payload: { id: cellToDelete.id } });
+      }
+    }
+
+    // Mark as initialized after first run
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.blocks, store.streamId, stream.id]);
+
+  // Reset initialization flag when stream changes
+  useEffect(() => {
+    hasInitializedRef.current = false;
+  }, [stream.id]);
+
   // Listen for bridge messages
   useEffect(() => {
     const unsubscribe = bridge.onMessage((message) => {
@@ -110,7 +186,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         if (cell) {
           store.updateBlock(cellId, { content: htmlContent });
 
-          // Save to Swift
+          // Save to Swift (include modelId if set)
           bridge.send({
             type: 'saveCell',
             payload: {
@@ -120,6 +196,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
               type: 'aiResponse',
               order: cell.order,
               originalPrompt: cell.originalPrompt,
+              modelId: cell.modelId,
             },
           });
         }
@@ -132,6 +209,13 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         const error = message.payload.error as string;
         store.setError(cellId, error);
         store.completeStreaming(cellId);
+      }
+
+      // Model selection (sent before streaming starts)
+      if (message.type === 'modelSelected' && message.payload?.cellId && message.payload?.modelId) {
+        const cellId = message.payload.cellId as string;
+        const modelId = message.payload.modelId as string;
+        store.updateBlock(cellId, { modelId });
       }
 
       // Restatement updates (heading form of original prompt)
@@ -332,12 +416,15 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     const originalPrompt = stripHtml(currentCell?.content || '').trim();
     if (!currentCell || !originalPrompt) return;
 
-    // Gather prior cells for context (exclude current cell since it's transforming)
-    const priorCells = cells.slice(0, cellIndex).map(c => ({
-      id: c.id,
-      content: c.content,
-      type: c.type,
-    }));
+    // Gather prior cells for context (exclude current cell and empty spacing cells)
+    const priorCells = cells
+      .slice(0, cellIndex)
+      .filter(c => !isEmptyCell(c.content))
+      .map(c => ({
+        id: c.id,
+        content: c.content,
+        type: c.type,
+      }));
 
     // Transform the current cell into an AI response
     store.updateBlock(cellId, {
@@ -375,107 +462,6 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
           ...c,
           content: stripHtml(c.content),
         })),
-      },
-    });
-  }, [stream.id, store]);
-
-  // Regenerate an AI cell with a new/edited prompt
-  const handleRegenerate = useCallback((cellId: string, newPrompt: string) => {
-    const cells = store.getBlocksArray();
-    const cellIndex = cells.findIndex(c => c.id === cellId);
-    const currentCell = cells[cellIndex];
-    if (!currentCell || currentCell.type !== 'aiResponse') return;
-
-    // Gather prior cells for context (exclude current cell)
-    const priorCells = cells.slice(0, cellIndex).map(c => ({
-      id: c.id,
-      content: c.content,
-      type: c.type,
-    }));
-
-    // Update the cell with new prompt and clear content
-    store.updateBlock(cellId, {
-      originalPrompt: newPrompt,
-      content: '',
-    });
-
-    // Save updated cell
-    bridge.send({
-      type: 'saveCell',
-      payload: {
-        id: cellId,
-        streamId: stream.id,
-        content: '',
-        type: 'aiResponse',
-        originalPrompt: newPrompt,
-        order: currentCell.order,
-      },
-    });
-
-    // Start streaming
-    store.startStreaming(cellId);
-    store.clearError(cellId);
-
-    // Send think request
-    bridge.send({
-      type: 'think',
-      payload: {
-        cellId,
-        streamId: stream.id,
-        currentCell: newPrompt,
-        priorCells: priorCells.map(c => ({
-          ...c,
-          content: stripHtml(c.content),
-        })),
-      },
-    });
-  }, [stream.id, store]);
-
-  // Apply a modifier to an AI cell
-  const handleApplyModifier = useCallback((cellId: string, modifierPrompt: string) => {
-    const cell = store.getBlock(cellId);
-    if (!cell || cell.type !== 'aiResponse') return;
-
-    store.clearError(cellId);
-    store.startModifying(cellId, modifierPrompt);
-
-    // Send apply modifier request
-    bridge.send({
-      type: 'applyModifier',
-      payload: {
-        cellId,
-        modifierPrompt,
-        currentContent: stripHtml(cell.content),
-      },
-    });
-  }, [store]);
-
-  // Select a specific version of an AI cell
-  const handleSelectVersion = useCallback((cellId: string, versionId: string) => {
-    console.log('[Version] Selecting version:', { cellId, versionId });
-    const cell = store.getBlock(cellId);
-    if (!cell || !cell.versions) return;
-
-    const version = cell.versions.find(v => v.id === versionId);
-    if (!version) return;
-
-    store.updateBlock(cellId, {
-      content: version.content,
-      activeVersionId: versionId,
-    });
-
-    // Save to Swift
-    bridge.send({
-      type: 'saveCell',
-      payload: {
-        id: cellId,
-        streamId: stream.id,
-        content: version.content,
-        type: cell.type,
-        order: cell.order,
-        modifiers: cell.modifiers,
-        versions: cell.versions,
-        activeVersionId: versionId,
       },
     });
   }, [stream.id, store]);
@@ -568,6 +554,72 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   const registerCellFocus = useCallback((cellId: string, focus: () => void) => {
     cellFocusRefs.current.set(cellId, focus);
   }, []);
+
+  // Open overlay for a cell
+  const handleOpenOverlay = useCallback((cellId: string) => {
+    setOverlayBlockId(cellId);
+  }, []);
+
+  // Close overlay
+  const handleCloseOverlay = useCallback(() => {
+    setOverlayBlockId(null);
+  }, []);
+
+  // Select a version for a cell (used from overlay)
+  const handleSelectVersion = useCallback((cellId: string, versionId: string) => {
+    const cell = store.getBlock(cellId);
+    if (!cell || !cell.versions) return;
+
+    const version = cell.versions.find(v => v.id === versionId);
+    if (!version) return;
+
+    store.updateBlock(cellId, {
+      content: version.content,
+      activeVersionId: versionId,
+    });
+
+    // Save to Swift
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
+        streamId: stream.id,
+        content: version.content,
+        type: cell.type,
+        order: cell.order,
+        modifiers: cell.modifiers,
+        versions: cell.versions,
+        activeVersionId: versionId,
+      },
+    });
+  }, [stream.id, store]);
+
+  // Toggle live status for a cell
+  const handleToggleLive = useCallback((cellId: string, isLive: boolean) => {
+    const cell = store.getBlock(cellId);
+    if (!cell) return;
+
+    // Build the new processing config
+    const newConfig = isLive
+      ? { ...cell.processingConfig, refreshTrigger: 'onStreamOpen' as const }
+      : { ...cell.processingConfig, refreshTrigger: undefined };
+
+    // Update local state
+    store.updateBlock(cellId, { processingConfig: newConfig });
+
+    // Persist to backend
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
+        streamId: stream.id,
+        content: cell.content,
+        type: cell.type,
+        order: cell.order,
+        processingConfig: newConfig,
+      },
+    });
+  }, [stream.id, store]);
 
   // Scroll to a cell by ID (used for reference navigation)
   const handleScrollToCell = useCallback((cellId: string) => {
@@ -688,47 +740,60 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         >
           {cells.map((cell, index) => {
             const isStreaming = store.isStreaming(cell.id);
-            const isModifying = store.isModifying(cell.id);
             const isRefreshing = store.isRefreshing(cell.id);
-            const modifyingData = store.getModifyingData(cell.id);
             const error = store.getError(cell.id);
             const streamingContent = store.getStreamingContent(cell.id);
-            const modifyingContent = modifyingData?.content;
             const refreshingContent = store.getRefreshingContent(cell.id);
 
-            // Convert streaming/modifying/refreshing markdown to HTML for display
+            // Convert streaming/refreshing markdown to HTML for display
             let displayContent = cell.content;
             if (isStreaming && streamingContent) {
               displayContent = markdownToHtml(streamingContent);
-            } else if (isModifying && modifyingContent) {
-              displayContent = markdownToHtml(modifyingContent);
             } else if (isRefreshing && refreshingContent) {
               displayContent = markdownToHtml(refreshingContent);
             }
 
+            const showOverlay = overlayBlockId === cell.id;
+
+            // Check if this is the first empty cell of an empty document (for showing placeholder)
+            const isFirstEmptyCell = index === 0 &&
+              cells.length === 1 &&
+              isEmptyCell(cell.content) &&
+              cell.type === 'text';
+
             return (
-              <BlockWrapper key={cell.id} id={cell.id}>
+              <BlockWrapper
+                key={cell.id}
+                id={cell.id}
+                onInfoClick={() => handleOpenOverlay(cell.id)}
+              >
                 <Cell
-                  cell={(isStreaming || isModifying || isRefreshing) ? { ...cell, content: displayContent } : cell}
+                  cell={(isStreaming || isRefreshing) ? { ...cell, content: displayContent } : cell}
                   isNew={cell.id === newBlockId}
                   isStreaming={isStreaming}
-                  isModifying={isModifying}
                   isRefreshing={isRefreshing}
-                  pendingModifierPrompt={modifyingData?.prompt}
-                  isOnlyCell={cells.length === 1}
+                  isFirstEmptyCell={isFirstEmptyCell}
                   error={error}
                   onUpdate={(content) => handleCellUpdate(cell.id, content)}
                   onDelete={() => handleCellDelete(cell.id)}
                   onEnter={() => handleCreateCell(index)}
                   onThink={() => handleThink(cell.id)}
-                  onRegenerate={(newPrompt) => handleRegenerate(cell.id, newPrompt)}
-                  onApplyModifier={(prompt) => handleApplyModifier(cell.id, prompt)}
-                  onSelectVersion={(versionId) => handleSelectVersion(cell.id, versionId)}
                   onFocusPrevious={() => handleFocusPrevious(index)}
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}
                   onScrollToCell={handleScrollToCell}
+                  onOpenOverlay={() => handleOpenOverlay(cell.id)}
+                  onToggleLive={(isLive) => handleToggleLive(cell.id, isLive)}
                 />
+                {showOverlay && (
+                  <CellOverlay
+                    cell={cell}
+                    onClose={handleCloseOverlay}
+                    onSelectVersion={(versionId) => handleSelectVersion(cell.id, versionId)}
+                    onScrollToCell={handleScrollToCell}
+                    onToggleLive={(isLive) => handleToggleLive(cell.id, isLive)}
+                  />
+                )}
               </BlockWrapper>
             );
           })}

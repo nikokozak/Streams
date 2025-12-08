@@ -2,6 +2,17 @@ import { useState, useRef, ReactNode, useEffect } from 'react';
 import { useBlockStore } from '../store/blockStore';
 import { bridge } from '../types';
 
+// Info icon SVG component
+function InfoIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+  );
+}
+
 // Global drag state to coordinate between BlockWrappers
 let globalDraggedId: string | null = null;
 let lastReorderTime = 0;
@@ -11,6 +22,7 @@ interface BlockWrapperProps {
   children: ReactNode;
   onDragStart?: () => void;
   onDragEnd?: () => void;
+  onInfoClick?: () => void;
 }
 
 /**
@@ -22,6 +34,7 @@ export function BlockWrapper({
   children,
   onDragStart,
   onDragEnd,
+  onInfoClick,
 }: BlockWrapperProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -113,6 +126,7 @@ export function BlockWrapper({
   // Show processing indicator if block has live config
   const isLiveBlock = block?.processingConfig?.refreshTrigger === 'onStreamOpen';
   const hasDependencies = block?.processingConfig?.refreshTrigger === 'onDependencyChange';
+  const isAiBlock = block?.type === 'aiResponse';
 
   return (
     <div
@@ -126,6 +140,17 @@ export function BlockWrapper({
     >
       {/* Hover controls - shown on left side */}
       <div className={`block-controls ${isHovered && !globalDraggedId ? 'block-controls--visible' : ''}`}>
+        {/* Info button - only for AI cells */}
+        {isAiBlock && onInfoClick && (
+          <button
+            className="block-info-button"
+            onClick={onInfoClick}
+            title="View details"
+          >
+            <InfoIcon />
+          </button>
+        )}
+
         {/* Drag handle */}
         <button
           className="block-drag-handle"

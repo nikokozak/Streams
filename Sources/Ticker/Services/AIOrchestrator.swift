@@ -48,6 +48,7 @@ final class AIOrchestrator {
     ///   - streamId: Optional stream ID for RAG retrieval
     ///   - priorCells: Conversation history
     ///   - sourceContext: Fallback source context (used if RAG unavailable)
+    ///   - onModelSelected: Called with the model ID when provider is selected
     func route(
         query: String,
         streamId: UUID? = nil,
@@ -55,7 +56,8 @@ final class AIOrchestrator {
         sourceContext: String?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
-        onError: @escaping (Error) -> Void
+        onError: @escaping (Error) -> Void,
+        onModelSelected: ((String) -> Void)? = nil
     ) async {
         // Classify if we have a classifier and smart routing is enabled
         var intent: QueryIntent = .knowledge
@@ -76,6 +78,9 @@ final class AIOrchestrator {
             onError(OrchestratorError.noProviderAvailable)
             return
         }
+
+        // Notify caller which model is being used
+        onModelSelected?(provider.modelId)
 
         // Try RAG retrieval if available, otherwise use fallback source context
         var contextToUse = sourceContext

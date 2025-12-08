@@ -10,6 +10,7 @@ final class PerplexityService: LLMProvider {
 
     let id = "perplexity"
     let name = "Perplexity"
+    var modelId: String { model }
 
     init(settings: SettingsService = .shared) {
         self.settings = settings

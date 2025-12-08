@@ -535,8 +535,9 @@ body {
   top: 50%;
   transform: translateY(-50%);
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   opacity: 0;
   transition: opacity 0.15s ease;
   z-index: 10;
@@ -544,6 +545,27 @@ body {
 
 .block-controls--visible {
   opacity: 1;
+}
+
+/* Info button - appears above drag handle for AI cells */
+.block-info-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
+}
+
+.block-info-button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-accent);
 }
 
 .block-drag-handle {
@@ -607,49 +629,62 @@ body {
   /* Subtle indication without background change */
 }
 
-/* AI Response - circle indicator button */
+/* AI Response cells */
 .cell--ai {
-  padding-left: calc(var(--spacing-xl) + var(--spacing-md));
   position: relative;
 }
 
-/* AI cell controls container */
-.cell-ai-controls {
+/* AI cell metadata badge - appears on hover in top-right */
+.cell-meta-badge {
   position: absolute;
-  left: calc(var(--spacing-xl) - 4px);
-  top: var(--spacing-sm);
-  display: flex;
-  flex-direction: column;
+  top: var(--spacing-xs);
+  right: var(--spacing-xs);
+  display: inline-flex;
   align-items: center;
-  gap: var(--spacing-xs);
-  z-index: 10;
-  opacity: 0.3;
-  transition: opacity 0.15s ease;
+  gap: 4px;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.15s ease;
+  z-index: 5;
 }
 
-.cell:hover .cell-ai-controls,
-.cell--menu-open .cell-ai-controls {
+.cell:hover .cell-meta-badge {
   opacity: 1;
 }
 
-/* Circle indicator - clickable button to open modifier menu */
-.cell-circle-indicator {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--color-text-tertiary);
+.cell-meta-badge:hover {
+  color: var(--color-text-secondary);
+}
+
+.cell-meta-badge-label {
+  font-family: 'SF Mono', monospace;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.cell-meta-badge-label:hover {
+  color: var(--color-text-secondary);
+}
+
+.cell-meta-live-toggle {
+  background: none;
   border: none;
   padding: 0;
+  font-size: 10px;
   cursor: pointer;
-  transition: background-color 0.15s ease;
+  opacity: 0.3;
+  transition: all 0.15s ease;
 }
 
-.cell-circle-indicator:hover {
-  background: var(--color-accent);
+.cell-meta-live-toggle:hover {
+  opacity: 0.6;
 }
 
-.cell-circle-indicator:focus {
-  outline: none;
+.cell-meta-live-toggle--active {
+  opacity: 1;
+  filter: none;
 }
 
 /* Quote cells */
@@ -820,184 +855,6 @@ body {
 .cell-prompt-regenerate:disabled {
   opacity: 0.4;
   cursor: not-allowed;
-}
-
-/* ==================== Modifier Menu ==================== */
-
-/* Inline menu that pushes cell content down */
-.modifier-menu {
-  margin-bottom: var(--spacing-sm);
-  padding-bottom: var(--spacing-xs);
-  border-bottom: 1px solid var(--color-border-subtle);
-  position: relative;
-  z-index: 20;
-}
-
-.modifier-menu-row {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-}
-
-.modifier-menu-version {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--color-text-tertiary);
-  background: var(--color-surface-hover);
-  padding: 1px 4px;
-  border-radius: 3px;
-  flex-shrink: 0;
-  border: none;
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.modifier-menu-version:hover {
-  background: var(--color-surface-active);
-  color: var(--color-text-secondary);
-}
-
-.modifier-menu-version--active {
-  background: var(--color-accent);
-  color: white;
-}
-
-.modifier-menu-version--active:hover {
-  background: var(--color-accent-hover);
-  color: white;
-}
-
-.modifier-menu-version--pending {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.modifier-menu-row--active {
-  background: var(--color-accent-soft);
-  margin: 0 calc(-1 * var(--spacing-xs));
-  padding: 0 var(--spacing-xs);
-  border-radius: var(--radius-sm);
-}
-
-.modifier-menu-text {
-  flex: 1;
-  cursor: text;
-  padding: 2px var(--spacing-xs);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-sm);
-  color: var(--color-text-secondary);
-  line-height: 1.4;
-  transition: background 0.15s ease;
-}
-
-.modifier-menu-text:hover {
-  background: var(--color-surface-hover);
-}
-
-.modifier-menu-text--pending {
-  color: var(--color-text-tertiary);
-  cursor: default;
-}
-
-.modifier-menu-text--pending:hover {
-  background: transparent;
-}
-
-.modifier-menu-input {
-  flex: 1;
-  background: var(--color-bg);
-  border: 1px solid var(--color-accent);
-  border-radius: var(--radius-sm);
-  padding: 2px var(--spacing-xs);
-  font-family: inherit;
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-  outline: none;
-}
-
-.modifier-menu-input::placeholder {
-  color: var(--color-text-tertiary);
-}
-
-.modifier-menu-regenerate {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: var(--font-size-sm);
-  color: var(--color-text-tertiary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
-}
-
-.modifier-menu-regenerate:hover {
-  color: var(--color-accent);
-  background: var(--color-surface-hover);
-}
-
-.modifier-menu-arrow {
-  text-align: center;
-  color: var(--color-text-muted);
-  font-size: 10px;
-  line-height: 1;
-  padding: 1px 0;
-}
-
-.modifier-menu-add {
-  width: 100%;
-  padding: var(--spacing-xs);
-  border: 1px dashed var(--color-border);
-  border-radius: var(--radius-sm);
-  background: transparent;
-  cursor: pointer;
-  color: var(--color-text-tertiary);
-  font-family: inherit;
-  font-size: var(--font-size-xs);
-  margin-top: var(--spacing-xs);
-  transition: all 0.15s ease;
-  position: relative;
-  z-index: 25;
-}
-
-.modifier-menu-add:hover {
-  border-color: var(--color-accent);
-  color: var(--color-accent);
-  background: var(--color-surface-hover);
-}
-
-.modifier-menu-add-form {
-  margin-top: 1px;
-}
-
-.modifier-menu-pending {
-  opacity: 0.7;
-}
-
-/* Processing state with spinner */
-.modifier-menu-processing {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-}
-
-.modifier-menu-spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--color-border);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spinner-rotate 0.8s linear infinite;
-}
-
-@keyframes spinner-rotate {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ==================== Cell Editor / TipTap ==================== */
@@ -1979,4 +1836,192 @@ body {
 .version-dropdown-item-time {
   font-size: var(--font-size-xs);
   color: var(--color-text-tertiary);
+}
+
+/* ==================== Cell Overlay ==================== */
+
+.cell-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-md);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  animation: overlay-fade-in 0.15s ease;
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.cell-overlay-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cell-overlay-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.cell-overlay-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
+}
+
+.cell-overlay-close:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.cell-overlay-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.cell-overlay-label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cell-overlay-prompt {
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  line-height: 1.5;
+  background: var(--color-surface);
+  padding: var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.cell-overlay-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.cell-overlay-model {
+  font-family: 'SF Mono', monospace;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.cell-overlay-separator {
+  color: var(--color-text-tertiary);
+}
+
+.cell-overlay-time {
+  color: var(--color-text-tertiary);
+}
+
+.cell-overlay-live {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.cell-overlay-dependency {
+  color: var(--color-success);
+  font-weight: 500;
+}
+
+.cell-overlay-references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.cell-overlay-ref-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cell-overlay-ref-link:hover {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+  background: var(--color-accent-soft);
+}
+
+/* Live toggle in overlay */
+.cell-overlay-live-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  width: 100%;
+  padding: var(--spacing-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+}
+
+.cell-overlay-live-toggle:hover {
+  border-color: var(--color-text-tertiary);
+}
+
+.cell-overlay-live-toggle--active {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.cell-overlay-live-toggle--active:hover {
+  border-color: var(--color-accent);
+}
+
+.cell-overlay-live-icon {
+  font-size: 14px;
+  opacity: 0.3;
+  transition: opacity 0.15s ease;
+}
+
+.cell-overlay-live-toggle--active .cell-overlay-live-icon {
+  opacity: 1;
+}
+
+.cell-overlay-live-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.cell-overlay-live-toggle--active .cell-overlay-live-text {
+  color: var(--color-accent);
 }

@@ -10,6 +10,7 @@ final class AIService: LLMProvider {
 
     let id = "openai"
     let name = "OpenAI"
+    var modelId: String { model }
 
     init(settings: SettingsService = .shared) {
         self.settings = settings

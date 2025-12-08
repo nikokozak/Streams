@@ -619,7 +619,7 @@ final class WebViewManager: NSObject {
             }
 
             // Route through orchestrator (handles smart routing and RAG retrieval internally)
-            Task {
+            Task { [weak self] in
                 await orchestrator.route(
                     query: resolvedCurrentCell,
                     streamId: streamIdForRAG,
@@ -627,7 +627,14 @@ final class WebViewManager: NSObject {
                     sourceContext: sourceContext,
                     onChunk: onChunk,
                     onComplete: onComplete,
-                    onError: onError
+                    onError: onError,
+                    onModelSelected: { modelId in
+                        // Notify frontend which model is being used
+                        self?.bridgeService.send(BridgeMessage(
+                            type: "modelSelected",
+                            payload: ["cellId": AnyCodable(cellId), "modelId": AnyCodable(modelId)]
+                        ))
+                    }
                 )
             }
 

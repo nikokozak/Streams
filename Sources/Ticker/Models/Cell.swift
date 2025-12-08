@@ -66,6 +66,8 @@ struct Cell: Identifiable, Codable {
     var references: [UUID]?
     /// Short name for @mentions (e.g., "nasdaq" for @block-nasdaq)
     var blockName: String?
+    /// ID of the model that generated this response (e.g., "gpt-4o", "sonar")
+    var modelId: String?
 
     init(
         id: UUID = UUID(),
@@ -83,7 +85,8 @@ struct Cell: Identifiable, Codable {
         activeVersionId: UUID? = nil,
         processingConfig: ProcessingConfig? = nil,
         references: [UUID]? = nil,
-        blockName: String? = nil
+        blockName: String? = nil,
+        modelId: String? = nil
     ) {
         self.id = id
         self.streamId = streamId
@@ -101,6 +104,7 @@ struct Cell: Identifiable, Codable {
         self.processingConfig = processingConfig
         self.references = references
         self.blockName = blockName
+        self.modelId = modelId
     }
 }
 
