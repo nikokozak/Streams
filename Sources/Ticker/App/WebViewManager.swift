@@ -548,37 +548,44 @@ final class WebViewManager: NSObject {
                 return
             }
 
-            // Parse prior cells
-            var priorCells: [[String: String]] = []
-            if let priorCellsRaw = payload["priorCells"]?.value as? [[String: Any]] {
-                for cell in priorCellsRaw {
-                    var cellDict: [String: String] = [:]
-                    if let content = cell["content"] as? String {
-                        cellDict["content"] = content
-                    }
-                    if let type = cell["type"] as? String {
-                        cellDict["type"] = type
-                    }
-                    priorCells.append(cellDict)
-                }
-            }
-
-            // Parse streamId for RAG retrieval
+            // Parse streamId for RAG retrieval and reference resolution
             var streamIdForRAG: UUID? = nil
             var sourceContext: String? = nil
+            var streamCells: [Cell] = []
 
             if let streamIdValue = payload["streamId"]?.value as? String,
                let streamId = UUID(uuidString: streamIdValue) {
                 streamIdForRAG = streamId
 
-                // Build fallback source context (used if RAG unavailable)
                 if let stream = try? persistence.loadStream(id: streamId) {
+                    streamCells = stream.cells
+
+                    // Build fallback source context (used if RAG unavailable)
                     let combinedText = stream.sources
                         .compactMap { $0.extractedText }
                         .joined(separator: "\n\n---\n\n")
                     if !combinedText.isEmpty {
                         sourceContext = combinedText
                     }
+                }
+            }
+
+            // Resolve @block-xxx references in the current cell content
+            let resolvedCurrentCell = DependencyService.resolveReferencesInContent(currentCell, cells: streamCells)
+
+            // Parse prior cells and resolve their references too
+            var priorCells: [[String: String]] = []
+            if let priorCellsRaw = payload["priorCells"]?.value as? [[String: Any]] {
+                for cell in priorCellsRaw {
+                    var cellDict: [String: String] = [:]
+                    if let content = cell["content"] as? String {
+                        // Resolve references in prior cell content
+                        cellDict["content"] = DependencyService.resolveReferencesInContent(content, cells: streamCells)
+                    }
+                    if let type = cell["type"] as? String {
+                        cellDict["type"] = type
+                    }
+                    priorCells.append(cellDict)
                 }
             }
 
@@ -614,7 +621,7 @@ final class WebViewManager: NSObject {
             // Route through orchestrator (handles smart routing and RAG retrieval internally)
             Task {
                 await orchestrator.route(
-                    query: currentCell,
+                    query: resolvedCurrentCell,
                     streamId: streamIdForRAG,
                     priorCells: priorCells,
                     sourceContext: sourceContext,
@@ -624,7 +631,7 @@ final class WebViewManager: NSObject {
                 )
             }
 
-            // Generate restatement asynchronously (don't block the AI response)
+            // Generate restatement asynchronously (use original, not resolved, for better heading)
             aiService.generateRestatement(for: currentCell) { [weak self] restatement in
                 guard let self, let restatement else { return }
 

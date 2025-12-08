@@ -117,6 +117,7 @@ export function BlockWrapper({
   return (
     <div
       ref={wrapperRef}
+      data-block-id={id}
       className={`block-wrapper ${isDragging ? 'block-wrapper--dragging' : ''} ${isHovered ? 'block-wrapper--hovered' : ''}`}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}

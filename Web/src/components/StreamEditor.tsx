@@ -4,6 +4,7 @@ import { Stream, Cell as CellType, SourceReference, Modifier, CellVersion, bridg
 import { Cell } from './Cell';
 import { BlockWrapper } from './BlockWrapper';
 import { SourcePanel } from './SourcePanel';
+import { ReferencePreview } from './ReferencePreview';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 import { useBlockFocus } from '../hooks/useBlockFocus';
@@ -568,6 +569,28 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     cellFocusRefs.current.set(cellId, focus);
   }, []);
 
+  // Scroll to a cell by ID (used for reference navigation)
+  const handleScrollToCell = useCallback((cellId: string) => {
+    // Find the cell element in the DOM
+    const cellElement = document.querySelector(`[data-block-id="${cellId}"]`);
+    if (cellElement) {
+      // Scroll the cell into view
+      cellElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+      // Add a brief highlight animation
+      cellElement.classList.add('block-wrapper--highlighted');
+      setTimeout(() => {
+        cellElement.classList.remove('block-wrapper--highlighted');
+      }, 2000);
+
+      // Focus the cell
+      const focusFn = cellFocusRefs.current.get(cellId);
+      if (focusFn) {
+        setTimeout(() => focusFn(), 300); // Wait for scroll to complete
+      }
+    }
+  }, []);
+
   // Title editing handlers
   const startEditingTitle = useCallback(() => {
     setIsEditingTitle(true);
@@ -704,6 +727,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
                   onFocusPrevious={() => handleFocusPrevious(index)}
                   onFocusNext={() => handleFocusNext(index)}
                   registerFocus={(focus) => registerCellFocus(cell.id, focus)}
+                  onScrollToCell={handleScrollToCell}
                 />
               </BlockWrapper>
             );
@@ -717,6 +741,9 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
           onSourceRemoved={handleSourceRemoved}
         />
       </div>
+
+      {/* Global reference preview tooltip */}
+      <ReferencePreview onScrollToCell={handleScrollToCell} />
     </div>
   );
 }

@@ -1,8 +1,10 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Cell as CellType } from '../types';
 import { CellEditor } from './CellEditor';
 import { ModifierMenu } from './ModifierMenu';
+import { VersionDropdown } from './VersionDropdown';
 import { useBlockStore } from '../store/blockStore';
+import { findByShortIdOrName } from '../utils/references';
 
 interface CellProps {
   cell: CellType;
@@ -23,6 +25,7 @@ interface CellProps {
   onFocusPrevious: () => void;
   onFocusNext: () => void;
   registerFocus: (focus: () => void) => void;
+  onScrollToCell?: (cellId: string) => void;
 }
 
 export function Cell({
@@ -44,6 +47,7 @@ export function Cell({
   onFocusPrevious,
   onFocusNext,
   registerFocus,
+  onScrollToCell,
 }: CellProps) {
   const [localContent, setLocalContent] = useState(cell.content);
   const [isFocused, setIsFocused] = useState(false);
@@ -67,6 +71,36 @@ export function Cell({
     }
     prevRestatementRef.current = cell.restatement;
   }, [cell.restatement]);
+
+  // Handle clicks on cell references
+  const handleReferenceClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Check if clicked on a cell-reference element (TipTap mention)
+      if (target.classList.contains('cell-reference') || target.closest('.cell-reference')) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Get the reference text from data-id or text content
+        const refElement = target.classList.contains('cell-reference')
+          ? target
+          : target.closest('.cell-reference');
+        if (!refElement) return;
+
+        // TipTap stores mention data in data-id attribute
+        const refId = refElement.getAttribute('data-id');
+        if (refId && onScrollToCell) {
+          // Find the referenced cell by ID or short ID
+          const blocks = useBlockStore.getState().blocks;
+          const referencedCell = findByShortIdOrName(blocks, refId);
+          if (referencedCell) {
+            onScrollToCell(referencedCell.id);
+          }
+        }
+      }
+    },
+    [onScrollToCell]
+  );
 
   // Check if content is empty (strip HTML tags for check)
   const isContentEmpty = (content: string) => {
@@ -267,14 +301,24 @@ export function Cell({
       className={`cell ${cellTypeClass} ${streamingClass} ${refreshingClass} ${errorClass} ${hasRestatement ? 'cell--has-restatement' : ''} ${isMenuOpen ? 'cell--menu-open' : ''}`}
       onBlur={handleBlur}
       onFocus={handleFocus}
+      onClick={handleReferenceClick}
     >
-      {/* Circle indicator for AI cells - click to open modifier menu */}
+      {/* AI cell controls - circle for modifier menu, version dropdown for quick switching */}
       {isAiCell && !isStreaming && (
-        <button
-          className="cell-circle-indicator"
-          onClick={() => setIsMenuOpen(!isMenuOpen)}
-          aria-label="Modifier history"
-        />
+        <div className="cell-ai-controls">
+          <button
+            className="cell-circle-indicator"
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-label="Modifier menu"
+          />
+          {versions.length > 1 && (
+            <VersionDropdown
+              versions={versions}
+              activeVersionId={cell.activeVersionId}
+              onSelectVersion={handleSelectVersion}
+            />
+          )}
+        </div>
       )}
 
       {/* Modifier menu - inline above cell content, pushes content down */}
@@ -329,6 +373,7 @@ export function Cell({
             content={localContent}
             autoFocus={!isMenuOpen && (isNew || (hasRestatement && isFocused))}
             placeholder={cell.type === 'aiResponse' ? '' : 'Write your thoughts...'}
+            cellId={cell.id}
             onChange={handleChange}
             onEnter={onEnter}
             onThink={() => { saveNow(); onThink(); }}

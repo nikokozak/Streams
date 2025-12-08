@@ -199,4 +199,47 @@ extension DependencyService {
         // Fallback: simple regex strip
         return html.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
     }
+
+    /// Resolve references in content by replacing @block-xxx with actual cell content
+    /// - Parameters:
+    ///   - content: Content containing @block-xxx references
+    ///   - cells: All cells in the stream
+    /// - Returns: Content with references replaced by cell content
+    static func resolveReferencesInContent(_ content: String, cells: [Cell]) -> String {
+        let text = stripHTML(content)
+        var result = text
+
+        // Find all references
+        let range = NSRange(text.startIndex..., in: text)
+        let matches = referencePattern.matches(in: text, range: range)
+
+        // Process in reverse order to maintain correct indices
+        for match in matches.reversed() {
+            guard let fullRange = Range(match.range, in: result),
+                  let idRange = Range(match.range(at: 1), in: result) else { continue }
+
+            let identifier = String(result[idRange]).lowercased()
+
+            // Find the referenced cell
+            var referencedCell: Cell?
+
+            // First try to match by blockName
+            if let cell = cells.first(where: { $0.blockName?.lowercased() == identifier }) {
+                referencedCell = cell
+            }
+            // Then try to match by UUID prefix
+            else if let cell = cells.first(where: { $0.id.uuidString.lowercased().hasPrefix(identifier) }) {
+                referencedCell = cell
+            }
+
+            if let cell = referencedCell {
+                // Replace with the cell's content (stripped of HTML)
+                let cellContent = stripHTML(cell.content)
+                let replacement = "[\(cell.blockName ?? "block"):\n\(cellContent)\n]"
+                result.replaceSubrange(fullRange, with: replacement)
+            }
+        }
+
+        return result
+    }
 }

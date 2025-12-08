@@ -1,12 +1,17 @@
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
-import { useEffect, useRef } from 'react';
+import Mention from '@tiptap/extension-mention';
+import { useEffect, useRef, useMemo } from 'react';
+import { createReferenceSuggestion } from './ReferenceSuggestion';
+import { useBlockStore } from '../store/blockStore';
+import { Cell } from '../types/models';
 
 interface CellEditorProps {
   content: string;
   placeholder?: string;
   autoFocus?: boolean;
+  cellId?: string; // Current cell's ID to exclude from suggestions
   onChange: (content: string) => void;
   onEnter?: () => void;
   onThink?: () => void;
@@ -19,6 +24,7 @@ export function CellEditor({
   content,
   placeholder = 'Type something...',
   autoFocus = false,
+  cellId,
   onChange,
   onEnter,
   onThink,
@@ -29,6 +35,20 @@ export function CellEditor({
   // Track if change originated from user typing (to avoid cursor reset)
   const isLocalChange = useRef(false);
 
+  // Get cells for reference suggestions (exclude current cell)
+  const getCells = useMemo(() => {
+    return (): Cell[] => {
+      const blocks = useBlockStore.getState().getBlocksArray();
+      return cellId ? blocks.filter((b) => b.id !== cellId) : blocks;
+    };
+  }, [cellId]);
+
+  // Create suggestion config with cell getter
+  const suggestionConfig = useMemo(
+    () => createReferenceSuggestion(getCells),
+    [getCells]
+  );
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -38,6 +58,15 @@ export function CellEditor({
       }),
       Placeholder.configure({
         placeholder,
+      }),
+      Mention.configure({
+        HTMLAttributes: {
+          class: 'cell-reference',
+        },
+        renderLabel({ node }) {
+          return `@block-${node.attrs.label ?? node.attrs.id}`;
+        },
+        suggestion: suggestionConfig,
       }),
     ],
     content,
