@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { SourceReference, bridge } from '../types';
 
 interface SourcePanelProps {
@@ -16,6 +16,7 @@ export function SourcePanel({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const handleAddSource = () => {
     setError(null);
@@ -33,6 +34,36 @@ export function SourcePanel({
     setError(message);
     setTimeout(() => setError(null), 5000);
   };
+
+  // Drag and drop handlers - visual feedback only
+  // Actual file handling is done by native macOS via DropTargetView
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer.types.includes('Files')) {
+      e.dataTransfer.dropEffect = 'copy';
+      setIsDragOver(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only set false if leaving the panel entirely
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX;
+    const y = e.clientY;
+    if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    // Drop is handled by native DropTargetView - this just clears the visual state
+  }, []);
 
   // Listen for source events from bridge
   useEffect(() => {
@@ -56,7 +87,12 @@ export function SourcePanel({
   }, [onSourceRemoved]);
 
   return (
-    <div className={`source-panel ${isCollapsed ? 'source-panel--collapsed' : ''}`}>
+    <div
+      className={`source-panel ${isCollapsed ? 'source-panel--collapsed' : ''} ${isDragOver ? 'source-panel--drag-over' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div className="source-panel-header">
         <button
           className="source-panel-toggle"
@@ -81,8 +117,13 @@ export function SourcePanel({
 
       {!isCollapsed && (
         <div className="source-list">
-          {sources.length === 0 ? (
-            <p className="source-empty">No sources attached</p>
+          {isDragOver && (
+            <div className="source-drop-zone">
+              Drop files here
+            </div>
+          )}
+          {sources.length === 0 && !isDragOver ? (
+            <p className="source-empty">No sources attached<br/><span className="source-empty-hint">Drag files here or click Add</span></p>
           ) : (
             sources.map((source) => (
               <SourceItem

@@ -490,7 +490,7 @@ body {
 .stream-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--spacing-md) 0 var(--spacing-xxl) 0;
+  padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xxl) var(--spacing-xxl);
 }
 
 /* ==================== Block Wrapper ==================== */
@@ -506,7 +506,22 @@ body {
 }
 
 .block-wrapper--dragging {
-  opacity: 0.5;
+  opacity: 0.4;
+}
+
+.block-wrapper--drag-over {
+  position: relative;
+}
+
+.block-drop-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-accent);
+  border-radius: 1px;
+  z-index: 100;
 }
 
 .block-wrapper--hovered > .block-content > .cell {
@@ -669,6 +684,17 @@ body {
   margin-bottom: var(--spacing-sm);
 }
 
+/* Restatement header for AI cells */
+.cell-restatement-header {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--color-text);
+  padding: var(--spacing-xs) 0;
+  margin-bottom: var(--spacing-sm);
+  line-height: var(--line-height-tight);
+  letter-spacing: -0.01em;
+}
+
 /* Animated entrance */
 .cell-restatement--animated {
   animation: restatement-enter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
@@ -792,6 +818,8 @@ body {
   margin-bottom: var(--spacing-sm);
   padding-bottom: var(--spacing-xs);
   border-bottom: 1px solid var(--color-border-subtle);
+  position: relative;
+  z-index: 20;
 }
 
 .modifier-menu-row {
@@ -921,6 +949,8 @@ body {
   font-size: var(--font-size-xs);
   margin-top: var(--spacing-xs);
   transition: all 0.15s ease;
+  position: relative;
+  z-index: 25;
 }
 
 .modifier-menu-add:hover {
@@ -1090,6 +1120,11 @@ body {
   width: 48px;
 }
 
+.source-panel--drag-over {
+  background: var(--color-surface-hover);
+  border-left-color: var(--color-accent);
+}
+
 .source-panel-header {
   display: flex;
   justify-content: space-between;
@@ -1155,6 +1190,26 @@ body {
   font-size: var(--font-size-sm);
   text-align: center;
   padding: var(--spacing-xl);
+}
+
+.source-empty-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  opacity: 0.7;
+  display: block;
+  margin-top: var(--spacing-xs);
+}
+
+.source-drop-zone {
+  border: 2px dashed var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-xl);
+  text-align: center;
+  color: var(--color-accent);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  margin: var(--spacing-sm);
+  background: rgba(var(--color-accent-rgb), 0.05);
 }
 
 .source-item {

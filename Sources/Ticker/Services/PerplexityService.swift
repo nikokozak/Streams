@@ -40,8 +40,19 @@ final class PerplexityService: LLMProvider {
         var messages: [[String: String]] = [
             ["role": "system", "content": request.systemPrompt]
         ]
+
+        // Perplexity requires alternating user/assistant messages
+        // Merge consecutive messages of the same role
         for msg in request.messages {
-            messages.append(["role": msg.role, "content": msg.content])
+            if let last = messages.last,
+               last["role"] == msg.role,
+               msg.role != "system" {
+                // Merge with previous message of same role
+                let merged = (last["content"] ?? "") + "\n\n" + msg.content
+                messages[messages.count - 1]["content"] = merged
+            } else {
+                messages.append(["role": msg.role, "content": msg.content])
+            }
         }
 
         var requestBody: [String: Any] = [
@@ -75,7 +86,22 @@ final class PerplexityService: LLMProvider {
             }
 
             if httpResponse.statusCode != 200 {
-                onError(LLMProviderError.apiError(httpResponse.statusCode, "API request failed"))
+                // Collect error body for better error messages
+                var errorBody = ""
+                for try await line in bytes.lines {
+                    errorBody += line
+                }
+
+                var errorMessage = "API request failed"
+                if let data = errorBody.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let error = json["error"] as? [String: Any],
+                   let message = error["message"] as? String {
+                    errorMessage = message
+                } else if !errorBody.isEmpty {
+                    errorMessage = errorBody
+                }
+                onError(LLMProviderError.apiError(httpResponse.statusCode, errorMessage))
                 return
             }
 

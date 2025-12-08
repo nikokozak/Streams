@@ -118,15 +118,24 @@ export function CellEditor({
         isLocalChange.current = false;
       } else {
         // Change came from outside (e.g., streaming), update content
+        // TipTap 2.x API: setContent(content, emitUpdate, parseOptions)
         editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
       }
     }
   }, [content, editor]);
 
-  // Expose focus method
+  // Focus editor when autoFocus becomes true (only on mount or when isNew)
+  // Use a ref to track if we've already focused, to avoid re-focusing on every render
+  const hasFocused = useRef(false);
+
   useEffect(() => {
-    if (autoFocus && editor) {
+    if (autoFocus && editor && !hasFocused.current) {
       editor.commands.focus('end');
+      hasFocused.current = true;
+    }
+    // Reset when autoFocus becomes false (e.g., cell is no longer new)
+    if (!autoFocus) {
+      hasFocused.current = false;
     }
   }, [autoFocus, editor]);
 

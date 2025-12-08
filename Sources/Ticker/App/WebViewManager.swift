@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 /// Manages the WKWebView and Swift ↔ JS bridge
 final class WebViewManager: NSObject {
-    let webView: WKWebView
+    let webView: DroppableWebView
     private let bridgeService: BridgeService
     private let persistence: PersistenceService?
     private let sourceService: SourceService?
@@ -14,6 +14,7 @@ final class WebViewManager: NSObject {
     private let dependencyService: DependencyService
     private var processingService: ProcessingService?
     private var mlxClassifier: MLXClassifier?
+    private var classifierSkipped = false  // True if classifier loading was intentionally skipped
 
     // RAG services
     private let embeddingService: EmbeddingService
@@ -27,7 +28,7 @@ final class WebViewManager: NSObject {
         self.bridgeService = BridgeService()
         config.userContentController.add(bridgeService, name: "bridge")
 
-        self.webView = WKWebView(frame: .zero, configuration: config)
+        self.webView = DroppableWebView(frame: .zero, configuration: config)
 
         // Initialize services
         self.aiService = AIService()
@@ -84,6 +85,47 @@ final class WebViewManager: NSObject {
         bridgeService.onMessage = { [weak self] message in
             self?.handleMessage(message)
         }
+
+        // Handle file drops from native drag-and-drop
+        webView.onFilesDropped = { [weak self] urls in
+            self?.handleDroppedFiles(urls)
+        }
+    }
+
+    /// Handle files dropped via native macOS drag-and-drop
+    private func handleDroppedFiles(_ urls: [URL]) {
+        // Get current stream ID from frontend
+        bridgeService.send(BridgeMessage(
+            type: "requestCurrentStreamId",
+            payload: nil
+        ))
+
+        // Store URLs temporarily and wait for stream ID response
+        pendingDroppedFiles = urls
+    }
+
+    private var pendingDroppedFiles: [URL] = []
+
+    /// Called by frontend with the current stream ID
+    private func processDroppedFiles(streamId: UUID) {
+        guard let sourceService else {
+            print("Source service unavailable")
+            pendingDroppedFiles = []
+            return
+        }
+
+        for url in pendingDroppedFiles {
+            do {
+                let source = try sourceService.addSource(from: url, to: streamId)
+                let sourcePayload = encodeSource(source)
+                bridgeService.send(BridgeMessage(type: "sourceAdded", payload: ["source": AnyCodable(sourcePayload)]))
+            } catch {
+                print("Failed to add dropped file \(url.lastPathComponent): \(error)")
+                bridgeService.send(BridgeMessage(type: "sourceError", payload: ["error": AnyCodable(error.localizedDescription)]))
+            }
+        }
+
+        pendingDroppedFiles = []
     }
 
     func load() {
@@ -113,13 +155,17 @@ final class WebViewManager: NSObject {
         // Only load classifier if smart routing is enabled and Perplexity is configured
         guard SettingsService.shared.smartRoutingEnabled else {
             print("MLX classifier skipped: smart routing disabled")
+            classifierSkipped = true
             return
         }
-        guard let perplexityKey = SettingsService.shared.perplexityAPIKey, !perplexityKey.isEmpty else {
+        guard let perplexityKey = SettingsService.shared.perplexityAPIKey,
+              !perplexityKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             print("MLX classifier skipped: Perplexity API key not configured")
+            classifierSkipped = true
             return
         }
 
+        classifierSkipped = false
         Task {
             let classifier = MLXClassifier()
             self.mlxClassifier = classifier  // Store immediately so loading state is visible
@@ -455,6 +501,26 @@ final class WebViewManager: NSObject {
                 }
             }
 
+        case "addSourceFromPath":
+            guard let payload = message.payload,
+                  let streamIdValue = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdValue),
+                  let filePath = payload["path"]?.value as? String,
+                  let sourceService else {
+                print("Invalid addSourceFromPath payload or service unavailable")
+                return
+            }
+
+            let url = URL(fileURLWithPath: filePath)
+            do {
+                let source = try sourceService.addSource(from: url, to: streamId)
+                let sourcePayload = encodeSource(source)
+                bridgeService.send(BridgeMessage(type: "sourceAdded", payload: ["source": AnyCodable(sourcePayload)]))
+            } catch {
+                print("Failed to add source from path: \(error)")
+                bridgeService.send(BridgeMessage(type: "sourceError", payload: ["error": AnyCodable(error.localizedDescription)]))
+            }
+
         case "removeSource":
             guard let payload = message.payload,
                   let idValue = payload["id"]?.value as? String,
@@ -709,6 +775,17 @@ final class WebViewManager: NSObject {
                 payload: ["settings": AnyCodable(settings)]
             ))
 
+        case "currentStreamId":
+            // Response from frontend with current stream ID for file drops
+            guard let payload = message.payload,
+                  let streamIdValue = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdValue) else {
+                print("Invalid currentStreamId payload")
+                pendingDroppedFiles = []
+                return
+            }
+            processDroppedFiles(streamId: streamId)
+
         default:
             print("Unknown message type: \(message.type)")
         }
@@ -860,9 +937,14 @@ final class WebViewManager: NSObject {
             if let error = classifier.loadError {
                 settings["classifierError"] = error.localizedDescription
             }
-        } else {
+        } else if classifierSkipped {
+            // Classifier was intentionally skipped (smart routing disabled or no API key)
             settings["classifierReady"] = false
-            settings["classifierLoading"] = true  // Still loading
+            settings["classifierLoading"] = false
+        } else {
+            // Classifier hasn't been loaded yet
+            settings["classifierReady"] = false
+            settings["classifierLoading"] = true
         }
         return settings
     }

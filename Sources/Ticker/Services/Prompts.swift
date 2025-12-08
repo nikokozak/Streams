@@ -77,12 +77,21 @@ enum Prompts {
     """
 
     static let applyModifier = """
-    Apply the user's instruction to transform this content.
+    Transform the content according to the user's instruction.
+
+    Instructions like:
+    - "shorter" / "condense" → Significantly reduce length while keeping key points
+    - "expand" / "more detail" → Add depth, examples, explanations
+    - "simpler" / "plain language" → Remove jargon, use everyday words
+    - "technical" / "formal" → Add precision, use domain terminology
+    - "bullets" / "list" → Convert to bullet points
+    - "prose" / "paragraph" → Convert to flowing paragraphs
+    - Other instructions → Apply the transformation literally
 
     Rules:
-    - Preserve the core meaning
-    - Use markdown formatting
-    - Be direct, no meta-commentary
-    - Output only the transformed content
+    - Actually transform the content—don't just rephrase slightly
+    - The output should be noticeably different from the input
+    - Use markdown formatting (headers, bullets, bold, etc.)
+    - Output only the transformed content, no commentary
     """
 }

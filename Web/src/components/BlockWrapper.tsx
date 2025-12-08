@@ -1,6 +1,10 @@
-import { useState, useRef, ReactNode } from 'react';
+import { useState, useRef, ReactNode, useEffect } from 'react';
 import { useBlockStore } from '../store/blockStore';
 import { bridge } from '../types';
+
+// Global drag state to coordinate between BlockWrappers
+let globalDraggedId: string | null = null;
+let lastReorderTime = 0;
 
 interface BlockWrapperProps {
   id: string;
@@ -11,7 +15,7 @@ interface BlockWrapperProps {
 
 /**
  * Wrapper component that adds hover controls and drag handle to blocks
- * Provides a Notion-like interaction feel
+ * Provides a Notion-like interaction feel with live reordering during drag
  */
 export function BlockWrapper({
   id,
@@ -28,45 +32,83 @@ export function BlockWrapper({
 
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', id);
+    e.dataTransfer.setData('application/x-block-id', id);
+    globalDraggedId = id;
     setIsDragging(true);
     onDragStart?.();
   };
 
   const handleDragEnd = () => {
+    // Persist final order to database
+    if (globalDraggedId) {
+      const { streamId, blockOrder } = useBlockStore.getState();
+      if (streamId) {
+        const orders = blockOrder.map((blockId, idx) => ({
+          id: blockId,
+          order: idx,
+        }));
+        bridge.send({
+          type: 'reorderBlocks',
+          payload: { streamId, orders },
+        });
+      }
+    }
+    globalDraggedId = null;
     setIsDragging(false);
     onDragEnd?.();
   };
 
   const handleDragOver = (e: React.DragEvent) => {
+    // Only handle our block drags, not text drags
+    if (!globalDraggedId || globalDraggedId === id) return;
+
     e.preventDefault();
+    e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
+
+    // Live reorder as user drags (throttled)
+    const now = Date.now();
+    if (now - lastReorderTime > 100) {
+      lastReorderTime = now;
+      const fromIdx = store.getBlockIndex(globalDraggedId);
+      const toIdx = store.getBlockIndex(id);
+      if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+        store.reorderBlocks(fromIdx, toIdx);
+      }
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const draggedId = e.dataTransfer.getData('text/plain');
-    if (draggedId && draggedId !== id) {
-      const fromIdx = store.getBlockIndex(draggedId);
-      const toIdx = store.getBlockIndex(id);
-      if (fromIdx !== -1 && toIdx !== -1) {
-        store.reorderBlocks(fromIdx, toIdx);
-
-        // Persist new order to database
-        const { streamId, blockOrder } = useBlockStore.getState();
-        if (streamId) {
-          const orders = blockOrder.map((blockId, idx) => ({
-            id: blockId,
-            order: idx,
-          }));
-          bridge.send({
-            type: 'reorderBlocks',
-            payload: { streamId, orders },
-          });
-        }
-      }
-    }
+    e.stopPropagation();
+    // Clear drag state immediately to prevent "return" animation
+    globalDraggedId = null;
   };
+
+  // Prevent ProseMirror from handling our block drags
+  // We attach to the .block-content child to stop events before they reach TipTap
+  useEffect(() => {
+    const wrapper = wrapperRef.current;
+    const blockContent = wrapper?.querySelector('.block-content');
+    if (!blockContent) return;
+
+    const preventEditorDrag = (e: Event) => {
+      if (globalDraggedId) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
+
+    // Only intercept on the content area (where TipTap lives), not the whole wrapper
+    blockContent.addEventListener('drop', preventEditorDrag, true);
+    blockContent.addEventListener('dragover', preventEditorDrag, true);
+    blockContent.addEventListener('dragenter', preventEditorDrag, true);
+    return () => {
+      blockContent.removeEventListener('drop', preventEditorDrag, true);
+      blockContent.removeEventListener('dragover', preventEditorDrag, true);
+      blockContent.removeEventListener('dragenter', preventEditorDrag, true);
+    };
+  }, []);
 
   // Show processing indicator if block has live config
   const isLiveBlock = block?.processingConfig?.refreshTrigger === 'onStreamOpen';
@@ -82,7 +124,7 @@ export function BlockWrapper({
       onDrop={handleDrop}
     >
       {/* Hover controls - shown on left side */}
-      <div className={`block-controls ${isHovered ? 'block-controls--visible' : ''}`}>
+      <div className={`block-controls ${isHovered && !globalDraggedId ? 'block-controls--visible' : ''}`}>
         {/* Drag handle */}
         <button
           className="block-drag-handle"

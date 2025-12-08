@@ -106,7 +106,27 @@ interface StreamListViewProps {
   onSettings: () => void;
 }
 
+function formatRelativeTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  const diffHours = Math.floor(diffMs / 3600000);
+  const diffDays = Math.floor(diffMs / 86400000);
+
+  if (diffMins < 1) return 'just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffHours < 24) return `${diffHours}h ago`;
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return date.toLocaleDateString();
+}
+
 function StreamListView({ streams, isLoading, isLoadingStream, onSelect, onCreate, onSettings }: StreamListViewProps) {
+  // Sort streams by updatedAt (most recent first)
+  const sortedStreams = [...streams].sort((a, b) =>
+    new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+  );
+
   return (
     <div className="stream-list">
       <header className="stream-list-header">
@@ -132,7 +152,7 @@ function StreamListView({ streams, isLoading, isLoadingStream, onSelect, onCreat
             <button onClick={onCreate} className="primary-button">Create your first stream</button>
           </div>
         ) : (
-          streams.map((stream) => (
+          sortedStreams.map((stream) => (
             <button
               key={stream.id}
               className={`stream-item ${isLoadingStream ? 'stream-item--loading' : ''}`}
@@ -141,7 +161,7 @@ function StreamListView({ streams, isLoading, isLoadingStream, onSelect, onCreat
             >
               <span className="stream-title">{stream.title}</span>
               <span className="stream-meta">
-                {stream.sourceCount} {stream.sourceCount === 1 ? 'source' : 'sources'} · {stream.cellCount} {stream.cellCount === 1 ? 'cell' : 'cells'}
+                {formatRelativeTime(stream.updatedAt)} · {stream.sourceCount} {stream.sourceCount === 1 ? 'source' : 'sources'} · {stream.cellCount} {stream.cellCount === 1 ? 'cell' : 'cells'}
               </span>
             </button>
           ))

@@ -84,6 +84,14 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         setSources(prev => prev.filter(s => s.id !== message.payload?.id));
       }
 
+      // Request for current stream ID (for native file drops)
+      if (message.type === 'requestCurrentStreamId') {
+        bridge.send({
+          type: 'currentStreamId',
+          payload: { streamId: stream.id }
+        });
+      }
+
       // AI streaming updates
       if (message.type === 'aiChunk' && message.payload?.cellId && message.payload?.chunk) {
         const cellId = message.payload.cellId as string;
@@ -493,9 +501,19 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   }, [store]);
 
   // Block focus management for keyboard navigation
-  useBlockFocus({
+  const { focusedBlockId } = useBlockFocus({
     onDeleteBlock: handleCellDelete,
   });
+
+  // When focusedBlockId changes (from keyboard nav), actually focus the DOM element
+  useEffect(() => {
+    if (focusedBlockId) {
+      const focusFn = cellFocusRefs.current.get(focusedBlockId);
+      if (focusFn) {
+        focusFn();
+      }
+    }
+  }, [focusedBlockId]);
 
   const handleCreateCell = useCallback((afterIndex: number) => {
     const newCell: CellType = {
@@ -640,7 +658,11 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       )}
 
       <div className="stream-body">
-        <div className="stream-content">
+        <div
+          className="stream-content"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => e.preventDefault()}
+        >
           {cells.map((cell, index) => {
             const isStreaming = store.isStreaming(cell.id);
             const isModifying = store.isModifying(cell.id);
