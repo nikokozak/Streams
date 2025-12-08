@@ -161,8 +161,6 @@ export function ModifierMenu({
   // Versions array: index 0 = V1 (original), index 1 = V2 (first modifier), etc.
   const totalVersions = versions.length || 1;
 
-  console.log('[ModifierMenu] versions:', versions.length, 'modifiers:', modifiers.length, 'activeVersionId:', activeVersionId);
-
   // Determine which version is active (default to latest)
   const getActiveVersionIndex = (): number => {
     if (!activeVersionId || versions.length === 0) return totalVersions - 1;
@@ -172,7 +170,13 @@ export function ModifierMenu({
   const activeIndex = getActiveVersionIndex();
 
   return (
-    <div className="modifier-menu" ref={menuRef}>
+    <div
+      className="modifier-menu"
+      ref={menuRef}
+      // Keep clicks inside the menu from being swallowed by the editor's focus handling
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       {/* Original prompt row - only show regenerate if not processing */}
       <ModifierMenuRow
         text={originalPrompt}
@@ -240,9 +244,9 @@ export function ModifierMenu({
                 onChange={(e) => setNewModifierText(e.target.value)}
                 onKeyDown={handleNewModifierKeyDown}
                 onBlur={() => {
-                  if (!newModifierText.trim()) {
-                    setIsAddingNew(false);
-                  }
+                  // Don't auto-close on blur - focus can move unexpectedly due to
+                  // TipTap/ProseMirror focus management. User can press Escape to cancel
+                  // or click elsewhere to close the menu entirely.
                 }}
                 placeholder="e.g., make it shorter"
               />
@@ -258,7 +262,11 @@ export function ModifierMenu({
         ) : (
           <button
             className="modifier-menu-add"
-            onClick={() => setIsAddingNew(true)}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsAddingNew(true);
+            }}
           >
             + Add modifier
           </button>

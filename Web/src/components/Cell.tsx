@@ -52,7 +52,9 @@ export function Cell({
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Does this cell have a restatement (dual-representation)?
-  const hasRestatement = Boolean(cell.restatement) && cell.type === 'text';
+  // For text cells: shows as a heading when unfocused
+  // For AI cells: shows as a header above the response
+  const hasRestatement = Boolean(cell.restatement);
 
   // Track when restatement first appears for animation
   const [showRestatementAnim, setShowRestatementAnim] = useState(false);
@@ -119,6 +121,27 @@ export function Cell({
       return;
     }
 
+    // If relatedTarget is null/undefined, check if the active element is within the cell
+    // This handles cases where the new focus target isn't yet in the DOM (e.g., button clicks)
+    if (!e.relatedTarget) {
+      // Use a microtask to check after the click completes
+      queueMicrotask(() => {
+        if (containerRef.current?.contains(document.activeElement)) {
+          return;
+        }
+        setIsFocused(false);
+        useBlockStore.getState().setFocus(null);
+        saveNow();
+
+        if (!isOnlyCell && cell.type !== 'aiResponse' && isContentEmpty(localContent)) {
+          setTimeout(() => {
+            onDelete();
+          }, 50);
+        }
+      });
+      return;
+    }
+
     setIsFocused(false);
     useBlockStore.getState().setFocus(null);
     saveNow();
@@ -171,11 +194,14 @@ export function Cell({
   // Sync local content with cell prop (for streaming updates and version changes)
   useEffect(() => {
     // Always sync when content changes from outside (streaming, modifying, or version switch)
-    // but only if we're not actively editing (not focused)
-    if (isStreaming || isModifying || !isFocused) {
+    // For AI cells, always sync since user doesn't edit them directly
+    // For text cells, only sync if not focused (to avoid interrupting typing)
+    const isAiCell = cell.type === 'aiResponse';
+    const shouldSync = isStreaming || isModifying || isAiCell || !isFocused;
+    if (shouldSync) {
       setLocalContent(cell.content);
     }
-  }, [cell.content, isStreaming, isModifying, isFocused]);
+  }, [cell.content, cell.type, isStreaming, isModifying, isFocused]);
 
   const cellTypeClass = cell.type === 'aiResponse'
     ? 'cell--ai'
@@ -187,8 +213,9 @@ export function Cell({
   const refreshingClass = isRefreshing ? 'cell--refreshing' : '';
   const errorClass = error ? 'cell--error' : '';
 
-  // Show restatement view when: has restatement, not focused, not new
-  const showRestatementView = hasRestatement && !isFocused && !isNew;
+  // Show restatement view when: text cell, has restatement, not focused, not new
+  // AI cells always show content, with restatement as a header above
+  const showRestatementView = hasRestatement && !isFocused && !isNew && cell.type === 'text';
 
   // Modifier state
   const modifiers = cell.modifiers || [];
@@ -284,16 +311,23 @@ export function Cell({
           {cell.restatement}
         </div>
       ) : (
-        // Edit mode: show original content with animated restatement header if applicable
+        // Edit mode: show original content with restatement header if applicable
         <>
-          {hasRestatement && showRestatementAnim && (
+          {/* AI cells: always show restatement as header when present */}
+          {isAiCell && hasRestatement && (
+            <div className={`cell-restatement-header ${showRestatementAnim ? 'cell-restatement--animated' : ''}`}>
+              {cell.restatement}
+            </div>
+          )}
+          {/* Text cells: show animated restatement when it first appears */}
+          {!isAiCell && hasRestatement && showRestatementAnim && (
             <div className="cell-restatement-inline cell-restatement--animated">
               {cell.restatement}
             </div>
           )}
           <CellEditor
             content={localContent}
-            autoFocus={isNew || (hasRestatement && isFocused)}
+            autoFocus={!isMenuOpen && (isNew || (hasRestatement && isFocused))}
             placeholder={cell.type === 'aiResponse' ? '' : 'Write your thoughts...'}
             onChange={handleChange}
             onEnter={onEnter}

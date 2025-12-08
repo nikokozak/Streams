@@ -118,7 +118,7 @@ export function CellEditor({
         isLocalChange.current = false;
       } else {
         // Change came from outside (e.g., streaming), update content
-        editor.commands.setContent(content);
+        editor.commands.setContent(content, false, { preserveWhitespace: 'full' });
       }
     }
   }, [content, editor]);
