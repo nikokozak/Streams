@@ -31,7 +31,10 @@ function buildImageBlock(images: string[]): string {
 }
 
 // Check if cell content is empty (for filtering spacing cells from context)
+// Note: cells with only images are NOT considered empty
 function isEmptyCell(content: string): boolean {
+  // Check for images first - a cell with images is not empty
+  if (content.includes('<img')) return false;
   return stripHtml(content).trim().length === 0;
 }
 

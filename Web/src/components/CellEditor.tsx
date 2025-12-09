@@ -73,30 +73,39 @@ export function CellEditor({
       reader.onload = () => {
         const base64 = (reader.result as string).split(',')[1]; // Remove data:image/...;base64, prefix
 
-        // Generate a temporary ID
-        const tempId = crypto.randomUUID();
+        // Generate a unique request ID to match response
+        const requestId = crypto.randomUUID();
 
-        // Set up listener for save response
+        // Timeout to prevent listener leak if response never comes
+        const timeout = setTimeout(() => {
+          unsubscribe();
+          console.error('Image save timed out');
+          resolve(null);
+        }, 10000);
+
+        // Set up listener for save response - match by requestId
         const unsubscribe = bridge.onMessage((message) => {
-          if (message.type === 'imageSaved' && message.payload?.fullPath) {
+          // Only handle responses for this specific request
+          if (message.type === 'imageSaved' && message.payload?.requestId === requestId) {
+            clearTimeout(timeout);
             unsubscribe();
-            // Use file:// URL for local images
             const fullPath = message.payload.fullPath as string;
             resolve(`file://${fullPath}`);
-          } else if (message.type === 'imageSaveError') {
+          } else if (message.type === 'imageSaveError' && message.payload?.requestId === requestId) {
+            clearTimeout(timeout);
             unsubscribe();
             console.error('Failed to save image:', message.payload?.error);
             resolve(null);
           }
         });
 
-        // Send save request
+        // Send save request with requestId for response matching
         bridge.send({
           type: 'saveImage',
           payload: {
             streamId,
             data: base64,
-            tempId,
+            requestId,
           },
         });
       };
@@ -159,16 +168,19 @@ export function CellEditor({
         // Get drop position
         const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
 
-        // Process each image
-        imageFiles.forEach(async (file) => {
-          const url = await handleImageFile(file);
-          if (url && coordinates) {
-            // Insert image at drop position
-            const node = view.state.schema.nodes.image.create({ src: url });
-            const transaction = view.state.tr.insert(coordinates.pos, node);
-            view.dispatch(transaction);
+        // Process images sequentially to avoid race conditions
+        (async () => {
+          for (const file of imageFiles) {
+            const url = await handleImageFile(file);
+            if (url && coordinates) {
+              // Insert at end of document (position changes as we insert)
+              const node = view.state.schema.nodes.image.create({ src: url });
+              const pos = Math.min(coordinates.pos, view.state.doc.content.size);
+              const transaction = view.state.tr.insert(pos, node);
+              view.dispatch(transaction);
+            }
           }
-        });
+        })();
 
         return true;
       },
@@ -182,18 +194,21 @@ export function CellEditor({
 
         event.preventDefault();
 
-        imageItems.forEach(async (item) => {
-          const file = item.getAsFile();
-          if (!file) return;
+        // Process images sequentially to avoid race conditions
+        (async () => {
+          for (const item of imageItems) {
+            const file = item.getAsFile();
+            if (!file) continue;
 
-          const url = await handleImageFile(file);
-          if (url) {
-            // Insert image at cursor position
-            const node = view.state.schema.nodes.image.create({ src: url });
-            const transaction = view.state.tr.replaceSelectionWith(node);
-            view.dispatch(transaction);
+            const url = await handleImageFile(file);
+            if (url) {
+              // Insert image at current cursor position
+              const node = view.state.schema.nodes.image.create({ src: url });
+              const transaction = view.state.tr.replaceSelectionWith(node);
+              view.dispatch(transaction);
+            }
           }
-        });
+        })();
 
         return true;
       },

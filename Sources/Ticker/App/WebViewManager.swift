@@ -813,11 +813,15 @@ final class WebViewManager: NSObject {
                   let base64Data = payload["data"]?.value as? String,
                   let imageData = Data(base64Encoded: base64Data) else {
                 print("Invalid saveImage payload")
+                let requestId = message.payload?["requestId"]?.value as? String
                 bridgeService.send(BridgeMessage(type: "imageSaveError", payload: [
-                    "error": AnyCodable("Invalid image data")
+                    "error": AnyCodable("Invalid image data"),
+                    "requestId": AnyCodable(requestId as Any)
                 ]))
                 return
             }
+
+            let requestId = payload["requestId"]?.value as? String
 
             do {
                 let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
@@ -825,12 +829,14 @@ final class WebViewManager: NSObject {
 
                 bridgeService.send(BridgeMessage(type: "imageSaved", payload: [
                     "relativePath": AnyCodable(relativePath),
-                    "fullPath": AnyCodable(fullPath)
+                    "fullPath": AnyCodable(fullPath),
+                    "requestId": AnyCodable(requestId as Any)
                 ]))
             } catch {
                 print("Failed to save image: \(error)")
                 bridgeService.send(BridgeMessage(type: "imageSaveError", payload: [
-                    "error": AnyCodable(error.localizedDescription)
+                    "error": AnyCodable(error.localizedDescription),
+                    "requestId": AnyCodable(requestId as Any)
                 ]))
             }
 
