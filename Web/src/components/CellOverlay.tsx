@@ -1,6 +1,7 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import { Cell } from '../types';
 import { VersionDropdown } from './VersionDropdown';
+import { PromptEditor } from './PromptEditor';
 import { useBlockStore } from '../store/blockStore';
 
 interface CellOverlayProps {
@@ -9,6 +10,7 @@ interface CellOverlayProps {
   onSelectVersion?: (versionId: string) => void;
   onScrollToCell?: (cellId: string) => void;
   onToggleLive?: (isLive: boolean) => void;
+  onRegenerate?: (newPrompt: string) => void;
 }
 
 /**
@@ -25,9 +27,17 @@ export function CellOverlay({
   onSelectVersion,
   onScrollToCell,
   onToggleLive,
+  onRegenerate,
 }: CellOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
+  const promptEditorRef = useRef<HTMLDivElement>(null);
   const blocks = useBlockStore((state) => state.blocks);
+
+  // Local state for editable prompt (stored as HTML for TipTap)
+  const [editedPromptHtml, setEditedPromptHtml] = useState(
+    // Convert plain text to simple HTML paragraph
+    cell.originalPrompt ? `<p>${cell.originalPrompt}</p>` : ''
+  );
 
   // Find cells that reference this cell
   const referencingCells = Object.values(blocks).filter((block) => {
@@ -35,23 +45,55 @@ export function CellOverlay({
     return block.references.includes(cell.id);
   });
 
-  // Close on ESC key
+  // Helper to extract plain text from HTML
+  const htmlToPlainText = useCallback((html: string) => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    return tmp.textContent || tmp.innerText || '';
+  }, []);
+
+  // Close on ESC key (but not when editing prompt)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        // If focus is inside the prompt editor, blur it first
+        if (promptEditorRef.current?.contains(document.activeElement)) {
+          (document.activeElement as HTMLElement)?.blur();
+        } else {
+          onClose();
+        }
       }
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
+  // Handle regenerate
+  const handleRegenerate = useCallback(() => {
+    const plainText = htmlToPlainText(editedPromptHtml).trim();
+    if (plainText && onRegenerate) {
+      onRegenerate(plainText);
+      onClose();
+    }
+  }, [editedPromptHtml, htmlToPlainText, onRegenerate, onClose]);
+
   // Close on click outside
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
-      if (overlayRef.current && !overlayRef.current.contains(e.target as Node)) {
-        onClose();
+      const target = e.target as Node;
+
+      // Don't close if clicking inside the overlay
+      if (overlayRef.current?.contains(target)) {
+        return;
       }
+
+      // Don't close if clicking inside a tippy popup (reference autocomplete)
+      const tippyPopup = (target as Element).closest?.('.tippy-box');
+      if (tippyPopup) {
+        return;
+      }
+
+      onClose();
     };
     // Use timeout to avoid immediate close from the click that opened it
     const timer = setTimeout(() => {
@@ -114,11 +156,30 @@ export function CellOverlay({
         </button>
       </div>
 
-      {/* Original prompt */}
-      {cell.originalPrompt && (
+      {/* Original prompt (editable for AI cells, with @ reference support) */}
+      {cell.type === 'aiResponse' && (
         <div className="cell-overlay-section">
-          <div className="cell-overlay-label">Original Prompt</div>
-          <div className="cell-overlay-prompt">{cell.originalPrompt}</div>
+          <div className="cell-overlay-label">Prompt</div>
+          <div className="cell-overlay-prompt-row" ref={promptEditorRef}>
+            <PromptEditor
+              content={editedPromptHtml}
+              cellId={cell.id}
+              placeholder="Enter a prompt..."
+              onChange={setEditedPromptHtml}
+              onSubmit={handleRegenerate}
+            />
+            <button
+              className="cell-overlay-regenerate"
+              onClick={handleRegenerate}
+              disabled={!htmlToPlainText(editedPromptHtml).trim()}
+              title="Regenerate (Enter)"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+                <path d="M21 3v5h-5" />
+              </svg>
+            </button>
+          </div>
         </div>
       )}
 

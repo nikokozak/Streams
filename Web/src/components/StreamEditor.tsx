@@ -621,6 +621,62 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     });
   }, [stream.id, store]);
 
+  // Regenerate an AI cell with a new/edited prompt
+  const handleRegenerate = useCallback((cellId: string, newPrompt: string) => {
+    const cells = store.getBlocksArray();
+    const cellIndex = cells.findIndex(c => c.id === cellId);
+    const cell = cells[cellIndex];
+    if (!cell || cell.type !== 'aiResponse') return;
+
+    // Gather prior cells for context (exclude current cell and empty spacing cells)
+    const priorCells = cells
+      .slice(0, cellIndex)
+      .filter(c => !isEmptyCell(c.content))
+      .map(c => ({
+        id: c.id,
+        content: c.content,
+        type: c.type,
+      }));
+
+    // Update the cell with new prompt and clear content
+    store.updateBlock(cellId, {
+      originalPrompt: newPrompt,
+      content: '',
+      restatement: undefined,
+    });
+
+    // Save updated cell
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
+        streamId: stream.id,
+        content: '',
+        type: 'aiResponse',
+        originalPrompt: newPrompt,
+        order: cell.order,
+      },
+    });
+
+    // Start streaming
+    store.startStreaming(cellId);
+    store.clearError(cellId);
+
+    // Send think request with full context
+    bridge.send({
+      type: 'think',
+      payload: {
+        cellId,
+        streamId: stream.id,
+        currentCell: newPrompt,
+        priorCells: priorCells.map(c => ({
+          ...c,
+          content: stripHtml(c.content),
+        })),
+      },
+    });
+  }, [stream.id, store]);
+
   // Scroll to a cell by ID (used for reference navigation)
   const handleScrollToCell = useCallback((cellId: string) => {
     // Find the cell element in the DOM
@@ -792,6 +848,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
                     onSelectVersion={(versionId) => handleSelectVersion(cell.id, versionId)}
                     onScrollToCell={handleScrollToCell}
                     onToggleLive={(isLive) => handleToggleLive(cell.id, isLive)}
+                    onRegenerate={(newPrompt) => handleRegenerate(cell.id, newPrompt)}
                   />
                 )}
               </BlockWrapper>
