@@ -864,6 +864,33 @@ body {
   cursor: text;
 }
 
+/* Cell images */
+.cell-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  margin: var(--spacing-sm) 0;
+  display: block;
+}
+
+.cell-image.ProseMirror-selectednode {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Image block container (for preserved images in AI cells) */
+.cell-images-block {
+  margin-bottom: var(--spacing-md);
+}
+
+.cell-images-block .cell-image {
+  margin-bottom: var(--spacing-sm);
+}
+
+.cell-images-block .cell-image:last-child {
+  margin-bottom: 0;
+}
+
 .ProseMirror {
   outline: none;
   font-size: var(--font-size-md);

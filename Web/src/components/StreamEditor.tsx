@@ -16,6 +16,20 @@ function stripHtml(html: string): string {
   return tmp.textContent || tmp.innerText || '';
 }
 
+// Extract image HTML from content (returns array of <img> tags)
+function extractImages(html: string): string[] {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const images = tmp.querySelectorAll('img');
+  return Array.from(images).map(img => img.outerHTML);
+}
+
+// Build HTML block with images (for prepending to AI response)
+function buildImageBlock(images: string[]): string {
+  if (images.length === 0) return '';
+  return `<div class="cell-images-block">${images.join('')}</div>`;
+}
+
 // Check if cell content is empty (for filtering spacing cells from context)
 function isEmptyCell(content: string): boolean {
   return stripHtml(content).trim().length === 0;
@@ -179,12 +193,16 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       if (message.type === 'aiComplete' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
         const rawContent = store.getStreamingContent(cellId) || '';
+        const preservedImages = store.getPreservedImages(cellId) || '';
         const htmlContent = markdownToHtml(rawContent);
+
+        // Combine preserved images with AI response
+        const finalContent = preservedImages + htmlContent;
 
         // Update cell with final content
         const cell = store.getBlock(cellId);
         if (cell) {
-          store.updateBlock(cellId, { content: htmlContent });
+          store.updateBlock(cellId, { content: finalContent });
 
           // Save to Swift (include modelId if set)
           bridge.send({
@@ -192,7 +210,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
             payload: {
               id: cellId,
               streamId: stream.id,
-              content: htmlContent,
+              content: finalContent,
               type: 'aiResponse',
               order: cell.order,
               originalPrompt: cell.originalPrompt,
@@ -416,6 +434,10 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     const originalPrompt = stripHtml(currentCell?.content || '').trim();
     if (!currentCell || !originalPrompt) return;
 
+    // Extract images from the cell content - these will be preserved
+    const images = extractImages(currentCell.content || '');
+    const imageBlock = buildImageBlock(images);
+
     // Gather prior cells for context (exclude current cell and empty spacing cells)
     const priorCells = cells
       .slice(0, cellIndex)
@@ -427,10 +449,11 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       }));
 
     // Transform the current cell into an AI response
+    // Keep images in content - they'll be prepended to the AI response
     store.updateBlock(cellId, {
       type: 'aiResponse',
       originalPrompt,
-      content: '',
+      content: imageBlock, // Preserve images, AI response will append
       restatement: undefined,
     });
 
@@ -440,15 +463,15 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       payload: {
         id: cellId,
         streamId: stream.id,
-        content: '',
+        content: imageBlock,
         type: 'aiResponse',
         originalPrompt,
         order: currentCell.order,
       },
     });
 
-    // Start streaming
-    store.startStreaming(cellId);
+    // Start streaming with preserved images
+    store.startStreaming(cellId, imageBlock);
     store.clearError(cellId);
 
     // Send think request with full context
@@ -628,6 +651,10 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     const cell = cells[cellIndex];
     if (!cell || cell.type !== 'aiResponse') return;
 
+    // Extract images from current cell content - preserve them across regeneration
+    const images = extractImages(cell.content || '');
+    const imageBlock = buildImageBlock(images);
+
     // Gather prior cells for context (exclude current cell and empty spacing cells)
     const priorCells = cells
       .slice(0, cellIndex)
@@ -638,10 +665,10 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         type: c.type,
       }));
 
-    // Update the cell with new prompt and clear content
+    // Update the cell with new prompt, preserve images
     store.updateBlock(cellId, {
       originalPrompt: newPrompt,
-      content: '',
+      content: imageBlock, // Keep images
       restatement: undefined,
     });
 
@@ -651,15 +678,15 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       payload: {
         id: cellId,
         streamId: stream.id,
-        content: '',
+        content: imageBlock,
         type: 'aiResponse',
         originalPrompt: newPrompt,
         order: cell.order,
       },
     });
 
-    // Start streaming
-    store.startStreaming(cellId);
+    // Start streaming with preserved images
+    store.startStreaming(cellId, imageBlock);
     store.clearError(cellId);
 
     // Send think request with full context
@@ -800,11 +827,14 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
             const error = store.getError(cell.id);
             const streamingContent = store.getStreamingContent(cell.id);
             const refreshingContent = store.getRefreshingContent(cell.id);
+            const preservedImages = store.getPreservedImages(cell.id);
 
             // Convert streaming/refreshing markdown to HTML for display
+            // Prepend preserved images so they stay visible during streaming
             let displayContent = cell.content;
             if (isStreaming && streamingContent) {
-              displayContent = markdownToHtml(streamingContent);
+              const imagesPrefix = preservedImages || '';
+              displayContent = imagesPrefix + markdownToHtml(streamingContent);
             } else if (isRefreshing && refreshingContent) {
               displayContent = markdownToHtml(refreshingContent);
             }

@@ -21,6 +21,9 @@ final class WebViewManager: NSObject {
     private let chunkingService: ChunkingService
     private var retrievalService: RetrievalService?
 
+    // Asset management
+    private let assetService = AssetService()
+
     override init() {
         let config = WKWebViewConfiguration()
         config.preferences.setValue(true, forKey: "developerExtrasEnabled")
@@ -328,6 +331,8 @@ final class WebViewManager: NSObject {
             }
             do {
                 try persistence.deleteStream(id: id)
+                // Also delete stream assets (images, etc.)
+                try? assetService.deleteAssets(for: id)
                 // Reload streams list
                 let summaries = try persistence.loadStreamSummaries()
                 let formatter = ISO8601DateFormatter()
@@ -799,6 +804,48 @@ final class WebViewManager: NSObject {
                 return
             }
             processDroppedFiles(streamId: streamId)
+
+        case "saveImage":
+            // Save base64-encoded image data to stream's assets folder
+            guard let payload = message.payload,
+                  let streamIdValue = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdValue),
+                  let base64Data = payload["data"]?.value as? String,
+                  let imageData = Data(base64Encoded: base64Data) else {
+                print("Invalid saveImage payload")
+                bridgeService.send(BridgeMessage(type: "imageSaveError", payload: [
+                    "error": AnyCodable("Invalid image data")
+                ]))
+                return
+            }
+
+            do {
+                let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
+                let fullPath = assetService.assetURL(for: relativePath).path
+
+                bridgeService.send(BridgeMessage(type: "imageSaved", payload: [
+                    "relativePath": AnyCodable(relativePath),
+                    "fullPath": AnyCodable(fullPath)
+                ]))
+            } catch {
+                print("Failed to save image: \(error)")
+                bridgeService.send(BridgeMessage(type: "imageSaveError", payload: [
+                    "error": AnyCodable(error.localizedDescription)
+                ]))
+            }
+
+        case "getAssetPath":
+            // Get the full file path for an asset
+            guard let payload = message.payload,
+                  let relativePath = payload["relativePath"]?.value as? String else {
+                print("Invalid getAssetPath payload")
+                return
+            }
+            let fullPath = assetService.assetURL(for: relativePath).path
+            bridgeService.send(BridgeMessage(type: "assetPath", payload: [
+                "relativePath": AnyCodable(relativePath),
+                "fullPath": AnyCodable(fullPath)
+            ]))
 
         default:
             print("Unknown message type: \(message.type)")

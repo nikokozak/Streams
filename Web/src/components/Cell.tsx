@@ -278,6 +278,7 @@ export function Cell({
             autoFocus={isNew || (hasRestatement && isFocused)}
             placeholder={isFirstEmptyCell ? 'Write your thoughts...' : ''}
             cellId={cell.id}
+            streamId={cell.streamId}
             onChange={handleChange}
             onEnter={onEnter}
             onThink={() => { saveNow(); onThink(); }}

@@ -9,6 +9,7 @@ import {
 /** Streaming content accumulator for AI responses */
 interface StreamingBlock {
   content: string;
+  preservedImages?: string; // HTML block of images to prepend to response
 }
 
 /** Modifier application in progress */
@@ -55,11 +56,12 @@ interface BlockActions {
   getBlockIndex: (id: string) => number;
 
   // Streaming state
-  startStreaming: (id: string) => void;
+  startStreaming: (id: string, preservedImages?: string) => void;
   appendStreamingContent: (id: string, chunk: string) => void;
   completeStreaming: (id: string) => void;
   isStreaming: (id: string) => boolean;
   getStreamingContent: (id: string) => string | undefined;
+  getPreservedImages: (id: string) => string | undefined;
 
   // Modifier state
   startModifying: (id: string, prompt: string) => void;
@@ -244,10 +246,10 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   getBlockIndex: (id) => get().blockOrder.indexOf(id),
 
   // Streaming
-  startStreaming: (id) => {
+  startStreaming: (id, preservedImages) => {
     const { streamingBlocks } = get();
     const newStreaming = new Map(streamingBlocks);
-    newStreaming.set(id, { content: '' });
+    newStreaming.set(id, { content: '', preservedImages });
     set({ streamingBlocks: newStreaming });
   },
 
@@ -257,7 +259,7 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     if (!existing) return;
 
     const newStreaming = new Map(streamingBlocks);
-    newStreaming.set(id, { content: existing.content + chunk });
+    newStreaming.set(id, { ...existing, content: existing.content + chunk });
     set({ streamingBlocks: newStreaming });
   },
 
@@ -271,6 +273,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   isStreaming: (id) => get().streamingBlocks.has(id),
 
   getStreamingContent: (id) => get().streamingBlocks.get(id)?.content,
+
+  getPreservedImages: (id) => get().streamingBlocks.get(id)?.preservedImages,
 
   // Modifying
   startModifying: (id, prompt) => {

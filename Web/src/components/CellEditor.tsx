@@ -2,16 +2,19 @@ import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Mention from '@tiptap/extension-mention';
-import { useEffect, useRef, useMemo } from 'react';
+import Image from '@tiptap/extension-image';
+import { useEffect, useRef, useMemo, useCallback } from 'react';
 import { createReferenceSuggestion } from './ReferenceSuggestion';
 import { useBlockStore } from '../store/blockStore';
 import { Cell } from '../types/models';
+import { bridge } from '../types';
 
 interface CellEditorProps {
   content: string;
   placeholder?: string;
   autoFocus?: boolean;
   cellId?: string; // Current cell's ID to exclude from suggestions
+  streamId?: string; // Stream ID for saving images
   onChange: (content: string) => void;
   onEnter?: () => void;
   onThink?: () => void;
@@ -25,6 +28,7 @@ export function CellEditor({
   placeholder = 'Type something...',
   autoFocus = false,
   cellId,
+  streamId,
   onChange,
   onEnter,
   onThink,
@@ -56,6 +60,54 @@ export function CellEditor({
     [getCells]
   );
 
+  // Handle image file drop/paste
+  const handleImageFile = useCallback(async (file: File): Promise<string | null> => {
+    if (!streamId) {
+      console.warn('Cannot save image: no streamId provided');
+      return null;
+    }
+
+    // Read file as base64
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = (reader.result as string).split(',')[1]; // Remove data:image/...;base64, prefix
+
+        // Generate a temporary ID
+        const tempId = crypto.randomUUID();
+
+        // Set up listener for save response
+        const unsubscribe = bridge.onMessage((message) => {
+          if (message.type === 'imageSaved' && message.payload?.fullPath) {
+            unsubscribe();
+            // Use file:// URL for local images
+            const fullPath = message.payload.fullPath as string;
+            resolve(`file://${fullPath}`);
+          } else if (message.type === 'imageSaveError') {
+            unsubscribe();
+            console.error('Failed to save image:', message.payload?.error);
+            resolve(null);
+          }
+        });
+
+        // Send save request
+        bridge.send({
+          type: 'saveImage',
+          payload: {
+            streamId,
+            data: base64,
+            tempId,
+          },
+        });
+      };
+      reader.onerror = () => {
+        console.error('Failed to read image file');
+        resolve(null);
+      };
+      reader.readAsDataURL(file);
+    });
+  }, [streamId]);
+
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -75,12 +127,75 @@ export function CellEditor({
         },
         suggestion: suggestionConfig,
       }),
+      Image.configure({
+        inline: false,
+        allowBase64: false,
+        HTMLAttributes: {
+          class: 'cell-image',
+        },
+      }),
     ],
     content,
     autofocus: autoFocus,
     editorProps: {
       attributes: {
         class: 'cell-editor-content',
+      },
+      // Handle image drops
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved || !event.dataTransfer?.files?.length) {
+          return false;
+        }
+
+        const files = Array.from(event.dataTransfer.files);
+        const imageFiles = files.filter(file => file.type.startsWith('image/'));
+
+        if (imageFiles.length === 0) {
+          return false;
+        }
+
+        event.preventDefault();
+
+        // Get drop position
+        const coordinates = view.posAtCoords({ left: event.clientX, top: event.clientY });
+
+        // Process each image
+        imageFiles.forEach(async (file) => {
+          const url = await handleImageFile(file);
+          if (url && coordinates) {
+            // Insert image at drop position
+            const node = view.state.schema.nodes.image.create({ src: url });
+            const transaction = view.state.tr.insert(coordinates.pos, node);
+            view.dispatch(transaction);
+          }
+        });
+
+        return true;
+      },
+      // Handle image paste
+      handlePaste: (view, event) => {
+        const items = event.clipboardData?.items;
+        if (!items) return false;
+
+        const imageItems = Array.from(items).filter(item => item.type.startsWith('image/'));
+        if (imageItems.length === 0) return false;
+
+        event.preventDefault();
+
+        imageItems.forEach(async (item) => {
+          const file = item.getAsFile();
+          if (!file) return;
+
+          const url = await handleImageFile(file);
+          if (url) {
+            // Insert image at cursor position
+            const node = view.state.schema.nodes.image.create({ src: url });
+            const transaction = view.state.tr.replaceSelectionWith(node);
+            view.dispatch(transaction);
+          }
+        });
+
+        return true;
       },
       handleKeyDown: (view, event) => {
         const { state } = view;
