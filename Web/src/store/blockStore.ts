@@ -81,6 +81,7 @@ interface BlockActions {
   setNewBlockId: (id: string | null) => void;
   focusNext: () => void;
   focusPrevious: () => void;
+  insertImageInFocusedBlock: (imageUrl: string) => void;
 
   // Refreshing state (live blocks, cascade updates)
   startRefreshing: (id: string) => void;
@@ -355,6 +356,28 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
     if (currentIndex > 0) {
       set({ focusedBlockId: blockOrder[currentIndex - 1] });
     }
+  },
+
+  insertImageInFocusedBlock: (imageUrl: string) => {
+    const { focusedBlockId, blocks } = get();
+    if (!focusedBlockId) return;
+
+    const block = blocks.get(focusedBlockId);
+    if (!block) return;
+
+    // Create image HTML and append to block content
+    const imageHtml = `<img src="${imageUrl}" class="cell-image" />`;
+    const newContent = block.content
+      ? `${block.content}${imageHtml}`
+      : imageHtml;
+
+    const newBlocks = new Map(blocks);
+    newBlocks.set(focusedBlockId, {
+      ...block,
+      content: newContent,
+      updatedAt: new Date().toISOString(),
+    });
+    set({ blocks: newBlocks });
   },
 
   // Refreshing (live blocks, cascade updates)

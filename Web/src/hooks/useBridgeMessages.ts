@@ -42,6 +42,13 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         });
       }
 
+      // Image dropped via native drag-and-drop
+      if (message.type === 'imageDropped' && message.payload?.fullPath) {
+        const fullPath = message.payload.fullPath as string;
+        const imageUrl = `file://${fullPath}`;
+        store.insertImageInFocusedBlock(imageUrl);
+      }
+
       // AI streaming updates
       if (message.type === 'aiChunk' && message.payload?.cellId && message.payload?.chunk) {
         const cellId = message.payload.cellId as string;

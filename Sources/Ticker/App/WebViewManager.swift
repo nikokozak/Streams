@@ -111,24 +111,60 @@ final class WebViewManager: NSObject {
 
     /// Called by frontend with the current stream ID
     private func processDroppedFiles(streamId: UUID) {
-        guard let sourceService else {
-            print("Source service unavailable")
-            pendingDroppedFiles = []
-            return
-        }
-
         for url in pendingDroppedFiles {
-            do {
-                let source = try sourceService.addSource(from: url, to: streamId)
-                let sourcePayload = encodeSource(source)
-                bridgeService.send(BridgeMessage(type: "sourceAdded", payload: ["source": AnyCodable(sourcePayload)]))
-            } catch {
-                print("Failed to add dropped file \(url.lastPathComponent): \(error)")
-                bridgeService.send(BridgeMessage(type: "sourceError", payload: ["error": AnyCodable(error.localizedDescription)]))
+            // Check if this is an image file
+            if isImageFile(url) {
+                processDroppedImage(url, streamId: streamId)
+            } else {
+                processDroppedDocument(url, streamId: streamId)
             }
         }
 
         pendingDroppedFiles = []
+    }
+
+    /// Check if URL points to an image file
+    private func isImageFile(_ url: URL) -> Bool {
+        let imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "tiff", "bmp"]
+        return imageExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Process a dropped image - save to assets and notify frontend
+    private func processDroppedImage(_ url: URL, streamId: UUID) {
+        do {
+            let imageData = try Data(contentsOf: url)
+            let relativePath = try assetService.saveImage(data: imageData, streamId: streamId, filename: url.lastPathComponent)
+            let fullPath = assetService.assetURL(for: relativePath).path
+
+            // Send to frontend to insert into focused cell
+            bridgeService.send(BridgeMessage(type: "imageDropped", payload: [
+                "relativePath": AnyCodable(relativePath),
+                "fullPath": AnyCodable(fullPath),
+                "streamId": AnyCodable(streamId.uuidString)
+            ]))
+        } catch {
+            print("Failed to save dropped image \(url.lastPathComponent): \(error)")
+            bridgeService.send(BridgeMessage(type: "imageDropError", payload: [
+                "error": AnyCodable(error.localizedDescription)
+            ]))
+        }
+    }
+
+    /// Process a dropped document - add as source
+    private func processDroppedDocument(_ url: URL, streamId: UUID) {
+        guard let sourceService else {
+            print("Source service unavailable")
+            return
+        }
+
+        do {
+            let source = try sourceService.addSource(from: url, to: streamId)
+            let sourcePayload = encodeSource(source)
+            bridgeService.send(BridgeMessage(type: "sourceAdded", payload: ["source": AnyCodable(sourcePayload)]))
+        } catch {
+            print("Failed to add dropped file \(url.lastPathComponent): \(error)")
+            bridgeService.send(BridgeMessage(type: "sourceError", payload: ["error": AnyCodable(error.localizedDescription)]))
+        }
     }
 
     func load() {
