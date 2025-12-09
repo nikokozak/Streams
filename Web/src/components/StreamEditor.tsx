@@ -1,42 +1,15 @@
 import { useRef, useCallback, useEffect, useState } from 'react';
-import { Stream, Cell as CellType, SourceReference, Modifier, CellVersion, bridge } from '../types';
+import { Stream, Cell as CellType, SourceReference, bridge } from '../types';
 import { Cell } from './Cell';
 import { BlockWrapper } from './BlockWrapper';
 import { SourcePanel } from './SourcePanel';
 import { ReferencePreview } from './ReferencePreview';
 import { CellOverlay } from './CellOverlay';
+import { stripHtml, extractImages, buildImageBlock, isEmptyCell } from '../utils/html';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 import { useBlockFocus } from '../hooks/useBlockFocus';
-
-// Strip HTML tags to get plain text
-function stripHtml(html: string): string {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  return tmp.textContent || tmp.innerText || '';
-}
-
-// Extract image HTML from content (returns array of <img> tags)
-function extractImages(html: string): string[] {
-  const tmp = document.createElement('div');
-  tmp.innerHTML = html;
-  const images = tmp.querySelectorAll('img');
-  return Array.from(images).map(img => img.outerHTML);
-}
-
-// Build HTML block with images (for prepending to AI response)
-function buildImageBlock(images: string[]): string {
-  if (images.length === 0) return '';
-  return `<div class="cell-images-block">${images.join('')}</div>`;
-}
-
-// Check if cell content is empty (for filtering spacing cells from context)
-// Note: cells with only images are NOT considered empty
-function isEmptyCell(content: string): boolean {
-  // Check for images first - a cell with images is not empty
-  if (content.includes('<img')) return false;
-  return stripHtml(content).trim().length === 0;
-}
+import { useBridgeMessages } from '../hooks/useBridgeMessages';
 
 interface StreamEditorProps {
   stream: Stream;
@@ -48,8 +21,13 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   // Use Zustand store for block state
   const store = useBlockStore();
 
+  // Bridge message handling (AI streaming, modifiers, sources, etc.)
+  const { sources, setSources } = useBridgeMessages({
+    streamId: stream.id,
+    initialSources: stream.sources,
+  });
+
   // Local state for stream-level concerns
-  const [sources, setSources] = useState<SourceReference[]>(stream.sources);
   const [title, setTitle] = useState(stream.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -164,247 +142,14 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     hasInitializedRef.current = false;
   }, [stream.id]);
 
-  // Listen for bridge messages
-  useEffect(() => {
-    const unsubscribe = bridge.onMessage((message) => {
-      // Source updates
-      if (message.type === 'sourceAdded' && message.payload?.source) {
-        const source = message.payload.source as SourceReference;
-        if (source.streamId === stream.id) {
-          setSources(prev => [...prev, source]);
-        }
-      }
-      if (message.type === 'sourceRemoved' && message.payload?.id) {
-        setSources(prev => prev.filter(s => s.id !== message.payload?.id));
-      }
-
-      // Request for current stream ID (for native file drops)
-      if (message.type === 'requestCurrentStreamId') {
-        bridge.send({
-          type: 'currentStreamId',
-          payload: { streamId: stream.id }
-        });
-      }
-
-      // AI streaming updates
-      if (message.type === 'aiChunk' && message.payload?.cellId && message.payload?.chunk) {
-        const cellId = message.payload.cellId as string;
-        const chunk = message.payload.chunk as string;
-        store.appendStreamingContent(cellId, chunk);
-      }
-
-      if (message.type === 'aiComplete' && message.payload?.cellId) {
-        const cellId = message.payload.cellId as string;
-        const rawContent = store.getStreamingContent(cellId) || '';
-        const preservedImages = store.getPreservedImages(cellId) || '';
-        const htmlContent = markdownToHtml(rawContent);
-
-        // Combine preserved images with AI response
-        const finalContent = preservedImages + htmlContent;
-
-        // Update cell with final content
-        const cell = store.getBlock(cellId);
-        if (cell) {
-          store.updateBlock(cellId, { content: finalContent });
-
-          // Save to Swift (include modelId if set)
-          bridge.send({
-            type: 'saveCell',
-            payload: {
-              id: cellId,
-              streamId: stream.id,
-              content: finalContent,
-              type: 'aiResponse',
-              order: cell.order,
-              originalPrompt: cell.originalPrompt,
-              modelId: cell.modelId,
-            },
-          });
-        }
-
-        store.completeStreaming(cellId);
-      }
-
-      if (message.type === 'aiError' && message.payload?.cellId) {
-        const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
-        store.setError(cellId, error);
-        store.completeStreaming(cellId);
-      }
-
-      // Model selection (sent before streaming starts)
-      if (message.type === 'modelSelected' && message.payload?.cellId && message.payload?.modelId) {
-        const cellId = message.payload.cellId as string;
-        const modelId = message.payload.modelId as string;
-        store.updateBlock(cellId, { modelId });
-      }
-
-      // Restatement updates (heading form of original prompt)
-      if (message.type === 'restatementGenerated' && message.payload?.cellId && message.payload?.restatement) {
-        const cellId = message.payload.cellId as string;
-        const restatement = message.payload.restatement as string;
-        store.updateBlock(cellId, { restatement });
-      }
-
-      // Modifier streaming updates
-      if (message.type === 'modifierCreated' && message.payload?.cellId && message.payload?.modifier) {
-        const cellId = message.payload.cellId as string;
-        const modifier = message.payload.modifier as Modifier;
-        console.log('[Modifier] Created:', { cellId, modifier });
-
-        // Add the modifier to the cell
-        const cell = store.getBlock(cellId);
-        if (cell) {
-          const existingModifiers = cell.modifiers || [];
-          store.updateBlock(cellId, { modifiers: [...existingModifiers, modifier] });
-        }
-
-        // Update the tracking entry with the modifier ID
-        store.setModifierId(cellId, modifier.id);
-      }
-
-      if (message.type === 'modifierChunk' && message.payload?.cellId && message.payload?.chunk) {
-        const cellId = message.payload.cellId as string;
-        const chunk = message.payload.chunk as string;
-        console.log('[Modifier] Chunk:', { cellId, chunkLength: chunk.length });
-        store.appendModifyingContent(cellId, chunk);
-      }
-
-      if (message.type === 'modifierComplete' && message.payload?.cellId && message.payload?.modifierId) {
-        const cellId = message.payload.cellId as string;
-        const modifierId = message.payload.modifierId as string;
-        console.log('[Modifier] Complete:', { cellId, modifierId });
-
-        const modifyingData = store.getModifyingData(cellId);
-        if (!modifyingData) {
-          console.warn('[Modifier] Complete but no modifying data found for:', cellId);
-          return;
-        }
-
-        const rawContent = modifyingData.content;
-        const htmlContent = markdownToHtml(rawContent);
-
-        // Create new version with the modified content
-        const newVersionId = crypto.randomUUID();
-        const newVersion: CellVersion = {
-          id: newVersionId,
-          content: htmlContent,
-          modifierIds: [modifierId],
-          createdAt: new Date().toISOString(),
-        };
-
-        const cell = store.getBlock(cellId);
-        if (!cell) {
-          store.completeModifying(cellId);
-          return;
-        }
-
-        // Get existing versions or create initial version from current content
-        let existingVersions = cell.versions || [];
-        if (existingVersions.length === 0 && cell.content) {
-          existingVersions = [{
-            id: crypto.randomUUID(),
-            content: cell.content,
-            modifierIds: [],
-            createdAt: cell.createdAt,
-          }];
-        }
-
-        const updatedVersions = [...existingVersions, newVersion];
-
-        // Update block
-        store.updateBlock(cellId, {
-          content: htmlContent,
-          versions: updatedVersions,
-          activeVersionId: newVersionId,
-        });
-
-        // Save to Swift
-        bridge.send({
-          type: 'saveCell',
-          payload: {
-            id: cellId,
-            streamId: stream.id,
-            content: htmlContent,
-            type: cell.type,
-            order: cell.order,
-            modifiers: cell.modifiers,
-            versions: updatedVersions,
-            activeVersionId: newVersionId,
-          },
-        });
-
-        store.completeModifying(cellId);
-      }
-
-      if (message.type === 'modifierError' && message.payload?.cellId) {
-        const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
-        store.setError(cellId, error);
-        store.completeModifying(cellId);
-      }
-
-      // Block refresh updates (live blocks, cascade updates)
-      if (message.type === 'blockRefreshStart' && message.payload?.cellId) {
-        const cellId = message.payload.cellId as string;
-        console.log('[BlockRefresh] Start:', cellId);
-        store.startRefreshing(cellId);
-      }
-
-      if (message.type === 'blockRefreshChunk' && message.payload?.cellId && message.payload?.chunk) {
-        const cellId = message.payload.cellId as string;
-        const chunk = message.payload.chunk as string;
-        store.appendRefreshingContent(cellId, chunk);
-      }
-
-      if (message.type === 'blockRefreshComplete' && message.payload?.cellId && message.payload?.content) {
-        const cellId = message.payload.cellId as string;
-        const rawContent = message.payload.content as string;
-        const htmlContent = markdownToHtml(rawContent);
-        console.log('[BlockRefresh] Complete:', cellId);
-
-        const cell = store.getBlock(cellId);
-        if (cell) {
-          store.updateBlock(cellId, { content: htmlContent });
-
-          // Save refreshed content to Swift
-          bridge.send({
-            type: 'saveCell',
-            payload: {
-              id: cellId,
-              streamId: stream.id,
-              content: htmlContent,
-              type: cell.type,
-              order: cell.order,
-              originalPrompt: cell.originalPrompt,
-              processingConfig: cell.processingConfig,
-              references: cell.references,
-              blockName: cell.blockName,
-            },
-          });
-        }
-
-        store.completeRefreshing(cellId);
-      }
-
-      if (message.type === 'blockRefreshError' && message.payload?.cellId) {
-        const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
-        console.error('[BlockRefresh] Error:', cellId, error);
-        store.setError(cellId, error);
-        store.completeRefreshing(cellId);
-      }
-    });
-    return unsubscribe;
-  }, [stream.id, store]);
-
+  // Source callbacks for SourcePanel
   const handleSourceAdded = useCallback((source: SourceReference) => {
     setSources(prev => [...prev, source]);
-  }, []);
+  }, [setSources]);
 
   const handleSourceRemoved = useCallback((sourceId: string) => {
     setSources(prev => prev.filter(s => s.id !== sourceId));
-  }, []);
+  }, [setSources]);
 
   const handleCellUpdate = useCallback((cellId: string, content: string) => {
     const cell = store.getBlock(cellId);
@@ -429,16 +174,19 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     }
   }, [stream.id, store]);
 
-  // Cmd+Enter: Transform current cell into AI response
-  const handleThink = useCallback((cellId: string) => {
+  // Shared helper for dispatching AI requests (used by handleThink and handleRegenerate)
+  const dispatchAIRequest = useCallback((
+    cellId: string,
+    prompt: string,
+    cellContent: string,
+    cellOrder: number,
+    isNewCell: boolean // true for handleThink (transforms cell), false for regenerate
+  ) => {
     const cells = store.getBlocksArray();
     const cellIndex = cells.findIndex(c => c.id === cellId);
-    const currentCell = cells[cellIndex];
-    const originalPrompt = stripHtml(currentCell?.content || '').trim();
-    if (!currentCell || !originalPrompt) return;
 
     // Extract images from the cell content - these will be preserved
-    const images = extractImages(currentCell.content || '');
+    const images = extractImages(cellContent);
     const imageBlock = buildImageBlock(images);
 
     // Gather prior cells for context (exclude current cell and empty spacing cells)
@@ -451,16 +199,13 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         type: c.type,
       }));
 
-    // Transform the current cell into an AI response
-    // Keep images in content - they'll be prepended to the AI response
-    store.updateBlock(cellId, {
-      type: 'aiResponse',
-      originalPrompt,
-      content: imageBlock, // Preserve images, AI response will append
-      restatement: undefined,
-    });
+    // Update cell state
+    const updates = isNewCell
+      ? { type: 'aiResponse' as const, originalPrompt: prompt, content: imageBlock, restatement: undefined }
+      : { originalPrompt: prompt, content: imageBlock, restatement: undefined };
+    store.updateBlock(cellId, updates);
 
-    // Save transformed cell
+    // Save cell
     bridge.send({
       type: 'saveCell',
       payload: {
@@ -468,8 +213,8 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         streamId: stream.id,
         content: imageBlock,
         type: 'aiResponse',
-        originalPrompt,
-        order: currentCell.order,
+        originalPrompt: prompt,
+        order: cellOrder,
       },
     });
 
@@ -483,7 +228,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       payload: {
         cellId,
         streamId: stream.id,
-        currentCell: originalPrompt,
+        currentCell: prompt,
         priorCells: priorCells.map(c => ({
           ...c,
           content: stripHtml(c.content),
@@ -491,6 +236,15 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
       },
     });
   }, [stream.id, store]);
+
+  // Cmd+Enter: Transform current cell into AI response
+  const handleThink = useCallback((cellId: string) => {
+    const currentCell = store.getBlock(cellId);
+    const originalPrompt = stripHtml(currentCell?.content || '').trim();
+    if (!currentCell || !originalPrompt) return;
+
+    dispatchAIRequest(cellId, originalPrompt, currentCell.content, currentCell.order, true);
+  }, [store, dispatchAIRequest]);
 
   const handleCellDelete = useCallback((cellId: string) => {
     const cells = store.getBlocksArray();
@@ -649,63 +403,11 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
 
   // Regenerate an AI cell with a new/edited prompt
   const handleRegenerate = useCallback((cellId: string, newPrompt: string) => {
-    const cells = store.getBlocksArray();
-    const cellIndex = cells.findIndex(c => c.id === cellId);
-    const cell = cells[cellIndex];
+    const cell = store.getBlock(cellId);
     if (!cell || cell.type !== 'aiResponse') return;
 
-    // Extract images from current cell content - preserve them across regeneration
-    const images = extractImages(cell.content || '');
-    const imageBlock = buildImageBlock(images);
-
-    // Gather prior cells for context (exclude current cell and empty spacing cells)
-    const priorCells = cells
-      .slice(0, cellIndex)
-      .filter(c => !isEmptyCell(c.content))
-      .map(c => ({
-        id: c.id,
-        content: c.content,
-        type: c.type,
-      }));
-
-    // Update the cell with new prompt, preserve images
-    store.updateBlock(cellId, {
-      originalPrompt: newPrompt,
-      content: imageBlock, // Keep images
-      restatement: undefined,
-    });
-
-    // Save updated cell
-    bridge.send({
-      type: 'saveCell',
-      payload: {
-        id: cellId,
-        streamId: stream.id,
-        content: imageBlock,
-        type: 'aiResponse',
-        originalPrompt: newPrompt,
-        order: cell.order,
-      },
-    });
-
-    // Start streaming with preserved images
-    store.startStreaming(cellId, imageBlock);
-    store.clearError(cellId);
-
-    // Send think request with full context
-    bridge.send({
-      type: 'think',
-      payload: {
-        cellId,
-        streamId: stream.id,
-        currentCell: newPrompt,
-        priorCells: priorCells.map(c => ({
-          ...c,
-          content: stripHtml(c.content),
-        })),
-      },
-    });
-  }, [stream.id, store]);
+    dispatchAIRequest(cellId, newPrompt, cell.content, cell.order, false);
+  }, [store, dispatchAIRequest]);
 
   // Scroll to a cell by ID (used for reference navigation)
   const handleScrollToCell = useCallback((cellId: string) => {
