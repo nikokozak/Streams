@@ -74,7 +74,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
               console.log('[QuickPanel] Triggering AI for cell:', triggerAI);
               store.startStreaming(triggerAI);
 
-              // Get prior cells for context
+              // Get prior cells for context (exclude the AI cell itself)
               const priorCells = store.blockOrder
                 .map(id => store.getBlock(id))
                 .filter((b): b is NonNullable<typeof b> => b !== undefined && b.id !== triggerAI)
@@ -83,12 +83,23 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
                   type: b.type,
                 }));
 
+              // Get referenced content (e.g., the quote cell from Quick Panel)
+              // This is the highlighted text/screenshot that the user is asking about
+              let referencedContent: string | undefined;
+              if (aiCell.references && aiCell.references.length > 0) {
+                const refCell = cells.find(c => c.id === aiCell.references?.[0]);
+                if (refCell) {
+                  referencedContent = refCell.content;
+                }
+              }
+
               // Send think request to Swift
               bridge.send({
                 type: 'think',
                 payload: {
                   cellId: triggerAI,
                   currentCell: aiCell.originalPrompt || '',
+                  referencedContent,  // The quote/screenshot the user selected
                   priorCells,
                   streamId,
                 },

@@ -621,6 +621,9 @@ final class WebViewManager: NSObject {
                 print("Think: Converting \(currentCellImageURLs.count) images to data URLs")
             }
 
+            // Get referenced content (from Quick Panel - the highlighted text/screenshot)
+            let referencedContent = payload["referencedContent"]?.value as? String
+
             // Parse streamId for RAG retrieval and reference resolution
             var streamIdForRAG: UUID? = nil
             var sourceContext: String? = nil
@@ -644,7 +647,24 @@ final class WebViewManager: NSObject {
             }
 
             // Resolve @block-xxx references in the current cell content
-            let resolvedCurrentCell = DependencyService.resolveReferencesInContent(currentCell, cells: streamCells)
+            var resolvedCurrentCell = DependencyService.resolveReferencesInContent(currentCell, cells: streamCells)
+
+            // If there's referenced content from Quick Panel, prepend it as context
+            if let refContent = referencedContent, !refContent.isEmpty {
+                // Strip HTML for cleaner context
+                let cleanRef = refContent
+                    .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "&nbsp;", with: " ")
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<")
+                    .replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if !cleanRef.isEmpty {
+                    resolvedCurrentCell = "Regarding this context:\n\"\"\"\n\(cleanRef)\n\"\"\"\n\n\(resolvedCurrentCell)"
+                }
+            }
 
             // Parse prior cells and resolve their references too (including images)
             var priorCells: [[String: Any]] = []
