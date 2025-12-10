@@ -344,6 +344,50 @@ final class PersistenceService {
         }
     }
 
+    /// Get the insertion order for Quick Panel content
+    /// Inserts before any trailing empty cell (like Notion's always-present empty block)
+    /// Also bumps the order of the trailing empty cell if one exists
+    func getInsertionOrderForQuickPanel(streamId: UUID) throws -> Int {
+        try dbQueue.write { db in
+            // Find the last cell - check if it's empty
+            let lastCell = try Row.fetchOne(db, sql: """
+                SELECT id, position, content
+                FROM cells
+                WHERE stream_id = ?
+                ORDER BY position DESC
+                LIMIT 1
+            """, arguments: [streamId.uuidString])
+
+            guard let lastCell = lastCell else {
+                // No cells - start at 0
+                return 0
+            }
+
+            let lastContent = lastCell["content"] as? String ?? ""
+            let lastOrder = lastCell["position"] as? Int ?? 0
+
+            // Check if last cell is empty (no content or just empty HTML tags)
+            let trimmedContent = lastContent
+                .replacingOccurrences(of: "<p>", with: "")
+                .replacingOccurrences(of: "</p>", with: "")
+                .replacingOccurrences(of: "<br>", with: "")
+                .replacingOccurrences(of: "&nbsp;", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if trimmedContent.isEmpty {
+                // Last cell is empty - bump its order and insert at its old position
+                let lastCellId = lastCell["id"] as? String ?? ""
+                try db.execute(sql: """
+                    UPDATE cells SET position = position + 10 WHERE id = ?
+                """, arguments: [lastCellId])
+                return lastOrder
+            } else {
+                // Last cell has content - insert after it
+                return lastOrder + 1
+            }
+        }
+    }
+
     // MARK: - Cell Operations
 
     func saveCell(_ cell: Cell) throws {

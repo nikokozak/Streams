@@ -213,15 +213,20 @@ final class QuickPanelManager: ObservableObject {
             // Get target stream (may create new one)
             let (streamId, isNewStream) = try getTargetStreamId()
 
+            // Get insertion order - inserts before trailing empty cell if one exists
+            // This bumps the empty cell's order, so we only call it once
+            var nextOrder = try persistence.getInsertionOrderForQuickPanel(streamId: streamId)
+
             var cellsToAdd: [Cell] = []
             var contextCellId: UUID?
 
             // 1. If we have context (selection or image), create a quote cell
             if let ctx = context, ctx.hasContent {
-                let contextCell = createContextCell(from: ctx, streamId: streamId)
+                let contextCell = createContextCell(from: ctx, streamId: streamId, order: nextOrder)
                 cellsToAdd.append(contextCell)
                 contextCellId = contextCell.id
                 try persistence.saveCell(contextCell)
+                nextOrder += 1
             }
 
             // 2. If we have input text
@@ -235,7 +240,7 @@ final class QuickPanelManager: ObservableObject {
                         content: "",  // Will be filled by AI
                         originalPrompt: trimmedInput,
                         type: .aiResponse,
-                        order: try persistence.getNextCellOrder(streamId: streamId),
+                        order: nextOrder,
                         references: contextCellId.map { [$0] }
                     )
                     cellsToAdd.append(aiCell)
@@ -249,7 +254,7 @@ final class QuickPanelManager: ObservableObject {
                         streamId: streamId,
                         content: "<p>\(escapeHtml(trimmedInput))</p>",
                         type: .text,
-                        order: try persistence.getNextCellOrder(streamId: streamId)
+                        order: nextOrder
                     )
                     cellsToAdd.append(textCell)
                     try persistence.saveCell(textCell)
@@ -292,7 +297,7 @@ final class QuickPanelManager: ObservableObject {
     }
 
     /// Create a quote cell from captured context
-    private func createContextCell(from ctx: QuickPanelContext, streamId: UUID) -> Cell {
+    private func createContextCell(from ctx: QuickPanelContext, streamId: UUID, order: Int) -> Cell {
         var content = ""
 
         if let text = ctx.selectedText {
@@ -324,7 +329,7 @@ final class QuickPanelManager: ObservableObject {
             streamId: streamId,
             content: content,
             type: .quote,
-            order: (try? persistence?.getNextCellOrder(streamId: streamId)) ?? 0,
+            order: order,
             sourceApp: ctx.activeApp
         )
     }
