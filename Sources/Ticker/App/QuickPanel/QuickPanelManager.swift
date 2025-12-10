@@ -13,6 +13,7 @@ final class QuickPanelManager: ObservableObject {
     @Published var inputText: String = ""
     @Published var isLoading: Bool = false
     @Published var error: String?
+    @Published var statusMessage: String?  // Temporary feedback (success/info messages)
 
     // MARK: - Services
 
@@ -80,12 +81,32 @@ final class QuickPanelManager: ObservableObject {
         show(with: capturedContext)
     }
 
-    /// Show after screenshot capture
+    /// Show after screenshot capture with status feedback
     func showAfterScreenshot() {
         if isVisible {
             hide()
         }
-        let capturedContext = selectionService.buildContext()
+        var capturedContext = selectionService.buildContext()
+
+        // Verify clipboard has image and update context
+        if let imageData = ClipboardService.getImageData() {
+            capturedContext = QuickPanelContext(
+                selectedText: capturedContext.selectedText,
+                activeApp: capturedContext.activeApp,
+                windowTitle: capturedContext.windowTitle,
+                panelPosition: capturedContext.panelPosition,
+                clipboardImage: imageData
+            )
+            statusMessage = "Screenshot attached"
+            // Auto-clear status after 2 seconds
+            Task {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                if self.statusMessage == "Screenshot attached" {
+                    self.statusMessage = nil
+                }
+            }
+        }
+
         show(with: capturedContext)
     }
 
@@ -94,8 +115,11 @@ final class QuickPanelManager: ObservableObject {
         self.context = capturedContext
         resetState()
 
-        // Request accessibility permission if needed
+        // Show accessibility warning if permission not granted and no context captured
         if !cursorService.hasAccessibilityPermission {
+            if !capturedContext.hasContent {
+                statusMessage = "Grant Accessibility permission to capture text selections"
+            }
             cursorService.requestAccessibilityPermission()
         }
 
@@ -126,6 +150,7 @@ final class QuickPanelManager: ObservableObject {
         panel?.orderOut(nil)
         isVisible = false
         resetState()
+        statusMessage = nil
     }
 
     /// Reset state for new session
@@ -282,9 +307,8 @@ final class QuickPanelManager: ObservableObject {
             // Save image via AssetService and embed as img tag
             do {
                 let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
-                // Use absolute path for ticker-asset:// scheme handler
-                let absolutePath = assetService.assetURL(for: relativePath).path
-                let assetUrl = "ticker-asset://\(absolutePath)"
+                // Use relative path for portability - AssetSchemeHandler resolves at render time
+                let assetUrl = "ticker-asset://\(relativePath)"
                 content = "<p><img src=\"\(assetUrl)\" alt=\"Screenshot\" style=\"max-width: 100%;\"></p>"
 
                 if let app = ctx.activeApp {

@@ -24,6 +24,11 @@ struct QuickPanelView: View {
                 errorView(error)
             }
 
+            // Status message (info/success feedback)
+            if let status = manager.statusMessage {
+                statusView(status)
+            }
+
             // Context badge (if text/image was captured)
             if let context = manager.context, context.hasContent {
                 contextBadge(context: context)
@@ -192,6 +197,28 @@ struct QuickPanelView: View {
         }
         .padding(Spacing.sm)
         .background(Colors.errorAccent.opacity(0.1))
+        .cornerRadius(Spacing.radiusMd)
+    }
+
+    // MARK: - Status View
+
+    private func statusView(_ status: String) -> some View {
+        let isWarning = status.contains("permission") || status.contains("Permission")
+        let icon = isWarning ? "info.circle" : "checkmark.circle"
+        let color = isWarning ? Colors.secondaryText : Color.green
+
+        return HStack(spacing: Spacing.xs) {
+            Image(systemName: icon)
+                .font(.system(size: 10))
+                .foregroundColor(color)
+
+            Text(status)
+                .font(.system(size: 11))
+                .foregroundColor(isWarning ? Colors.secondaryText : Colors.primaryText)
+                .lineLimit(2)
+        }
+        .padding(Spacing.sm)
+        .background(color.opacity(0.1))
         .cornerRadius(Spacing.radiusMd)
     }
 

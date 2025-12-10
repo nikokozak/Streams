@@ -18,7 +18,17 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         let filePath = url.path
-        let requestedURL = URL(fileURLWithPath: filePath)
+
+        // Support both absolute paths (legacy) and relative paths (portable)
+        // Relative paths are resolved against the assets base directory
+        let requestedURL: URL
+        if filePath.hasPrefix("/Users/") || filePath.hasPrefix("/var/") {
+            // Absolute path (legacy format)
+            requestedURL = URL(fileURLWithPath: filePath)
+        } else {
+            // Relative path (portable format): e.g., "/streamId/filename.png"
+            requestedURL = Self.assetsBaseDirectory.appendingPathComponent(filePath)
+        }
 
         // Security: Canonicalize paths to prevent directory traversal attacks
         let canonicalPath = requestedURL.standardized.resolvingSymlinksInPath().path
