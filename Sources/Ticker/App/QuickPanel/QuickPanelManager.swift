@@ -20,6 +20,7 @@ final class QuickPanelManager: ObservableObject {
     private let selectionService: SelectionReaderService
     private weak var persistence: PersistenceService?
     private weak var bridgeService: BridgeService?
+    private var assetService: AssetService?
 
     // MARK: - Height Management
 
@@ -46,9 +47,10 @@ final class QuickPanelManager: ObservableObject {
     }
 
     /// Configure services after initialization (for dependency injection)
-    func configure(persistence: PersistenceService, bridgeService: BridgeService) {
+    func configure(persistence: PersistenceService, bridgeService: BridgeService, assetService: AssetService? = nil) {
         self.persistence = persistence
         self.bridgeService = bridgeService
+        self.assetService = assetService ?? AssetService()
     }
 
     // MARK: - Public API
@@ -259,7 +261,30 @@ final class QuickPanelManager: ObservableObject {
         // No streams exist - create a new one
         let newStream = Stream(title: "Untitled")
         try persistence.saveStream(newStream)
+
+        // Notify frontend about the new stream
+        notifyStreamCreated(newStream)
+
         return newStream.id
+    }
+
+    /// Notify frontend that a new stream was created
+    private func notifyStreamCreated(_ stream: Stream) {
+        guard let bridgeService = bridgeService else { return }
+
+        let formatter = ISO8601DateFormatter()
+        let payload: [String: AnyCodable] = [
+            "stream": AnyCodable([
+                "id": stream.id.uuidString,
+                "title": stream.title,
+                "sources": [] as [[String: Any]],
+                "cells": [] as [[String: Any]],
+                "createdAt": formatter.string(from: stream.createdAt),
+                "updatedAt": formatter.string(from: stream.updatedAt)
+            ] as [String: Any])
+        ]
+
+        bridgeService.send(BridgeMessage(type: "streamCreated", payload: payload))
     }
 
     /// Create a quote cell from captured context
@@ -274,10 +299,20 @@ final class QuickPanelManager: ObservableObject {
             if let app = ctx.activeApp {
                 content += "<p class=\"source-info\">— \(escapeHtml(app))</p>"
             }
-        } else if ctx.hasImage {
-            // Image will be handled separately via AssetService
-            // For now, placeholder
-            content = "<p>[Screenshot]</p>"
+        } else if let imageData = ctx.clipboardImage, let assetService = assetService {
+            // Save image via AssetService and embed as img tag
+            do {
+                let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
+                let assetUrl = "ticker-asset://\(relativePath)"
+                content = "<p><img src=\"\(assetUrl)\" alt=\"Screenshot\" style=\"max-width: 100%;\"></p>"
+
+                if let app = ctx.activeApp {
+                    content += "<p class=\"source-info\">— Screenshot from \(escapeHtml(app))</p>"
+                }
+            } catch {
+                print("[QuickPanel] Failed to save screenshot: \(error)")
+                content = "<p>[Screenshot failed to save]</p>"
+            }
         }
 
         return Cell(

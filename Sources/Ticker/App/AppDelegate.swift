@@ -1,5 +1,6 @@
 import AppKit
 import WebKit
+import ApplicationServices
 
 // Manual entry point for proper app initialization
 @main
@@ -25,7 +26,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenuBar()
         setupMainWindow()
         setupQuickPanel()
+        requestAccessibilityPermissionIfNeeded()
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Request accessibility permission early so it's ready when Quick Panel is first used
+    private func requestAccessibilityPermissionIfNeeded() {
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary
+        if !AXIsProcessTrustedWithOptions(options) {
+            print("[Ticker] Accessibility permission not yet granted - prompt shown")
+        }
     }
 
     private func setupMenuBar() {
@@ -126,10 +136,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         process.arguments = ["-ic"]  // Interactive, clipboard
 
-        process.terminationHandler = { [weak self] _ in
+        process.terminationHandler = { [weak self] terminatedProcess in
             Task { @MainActor in
+                // Only show panel if capture succeeded (exit code 0)
+                // User cancellation (ESC) returns exit code 1
+                guard terminatedProcess.terminationStatus == 0 else {
+                    print("[Screenshot] Capture cancelled or failed (exit code: \(terminatedProcess.terminationStatus))")
+                    return
+                }
+
                 // Short delay to allow clipboard to update
                 try? await Task.sleep(nanoseconds: 100_000_000)  // 0.1s
+
+                // Verify clipboard actually has an image before showing panel
+                guard ClipboardService.hasImage() else {
+                    print("[Screenshot] No image in clipboard after capture")
+                    return
+                }
+
                 self?.quickPanelManager?.showAfterScreenshot()
             }
         }

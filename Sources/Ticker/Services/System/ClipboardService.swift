@@ -12,6 +12,13 @@ enum ClipboardService {
         NSPasteboard.general.string(forType: .string)
     }
 
+    /// Check if clipboard contains an image
+    static func hasImage() -> Bool {
+        let pasteboard = NSPasteboard.general
+        let imageTypes: [NSPasteboard.PasteboardType] = [.tiff, .png]
+        return pasteboard.canReadItem(withDataConformingToTypes: imageTypes.map { $0.rawValue })
+    }
+
     /// Get current clipboard image
     static func getImage() -> NSImage? {
         let pasteboard = NSPasteboard.general

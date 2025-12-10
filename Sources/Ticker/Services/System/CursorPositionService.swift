@@ -82,18 +82,23 @@ final class CursorPositionService {
     /// Calculate best position for a panel near the mouse cursor
     /// Returns position in Cocoa coordinates (bottom-left origin)
     func calculatePanelPosition(panelSize: CGSize) -> CGPoint {
-        guard let screen = NSScreen.main else {
+        let mouseLocation = getMouseLocation()
+
+        // Find screen containing the mouse cursor
+        let screen = NSScreen.screens.first { screen in
+            screen.frame.contains(mouseLocation)
+        } ?? NSScreen.main
+
+        guard let screen = screen else {
             return CGPoint(x: 100, y: 100)
         }
 
-        let screenFrame = screen.frame
+        let screenFrame = screen.visibleFrame  // Use visibleFrame to account for dock/menubar
 
-        // Use mouse location (already in Cocoa coordinates)
-        let mouseLocation = getMouseLocation()
         var x = mouseLocation.x - panelSize.width / 2  // Center horizontally on mouse
         var y = mouseLocation.y - panelSize.height - 20  // Below mouse
 
-        // Ensure panel stays on screen
+        // Ensure panel stays on this screen
         x = max(screenFrame.minX + 8, min(x, screenFrame.maxX - panelSize.width - 8))
         y = max(screenFrame.minY + 8, min(y, screenFrame.maxY - panelSize.height - 8))
 

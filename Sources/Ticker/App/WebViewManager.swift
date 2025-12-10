@@ -1063,6 +1063,9 @@ final class WebViewManager: NSObject {
                 if let blockName = cell.blockName {
                     dict["blockName"] = blockName
                 }
+                if let sourceApp = cell.sourceApp {
+                    dict["sourceApp"] = sourceApp
+                }
                 // Source binding
                 if let sourceBinding = cell.sourceBinding {
                     var bindingDict: [String: Any] = ["sourceId": sourceBinding.sourceId.uuidString]
@@ -1202,6 +1205,7 @@ final class WebViewManager: NSObject {
         }
 
         let blockName = payload["blockName"]?.value as? String
+        let sourceApp = payload["sourceApp"]?.value as? String
 
         // Decode source binding
         var sourceBinding: SourceBinding? = nil
@@ -1245,7 +1249,8 @@ final class WebViewManager: NSObject {
             activeVersionId: activeVersionId,
             processingConfig: processingConfig,
             references: references,
-            blockName: blockName
+            blockName: blockName,
+            sourceApp: sourceApp
         )
     }
 }

@@ -27,6 +27,24 @@ export function App() {
           setIsLoadingStream(false);
           setView('stream');
           break;
+        case 'streamCreated':
+          // Quick Panel created a new stream - add to list and switch to it
+          if (message.payload?.stream) {
+            const newStream = message.payload.stream as Stream;
+            console.log('[App] Stream created via Quick Panel:', newStream.id);
+            setCurrentStream(newStream);
+            setView('stream');
+            // Also add to streams list
+            setStreams(prev => [{
+              id: newStream.id,
+              title: newStream.title,
+              sourceCount: 0,
+              cellCount: 0,
+              updatedAt: newStream.updatedAt,
+              previewText: null
+            }, ...prev]);
+          }
+          break;
       }
     });
 
