@@ -1981,8 +1981,8 @@ body {
   border-radius: var(--radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
   min-width: 240px;
-  max-width: 320px;
-  max-height: 280px;
+  max-width: 360px;
+  max-height: 400px;
   overflow-y: auto;
   padding: var(--spacing-xs);
 }

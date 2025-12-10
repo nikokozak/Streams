@@ -15,6 +15,8 @@ final class WebViewManager: NSObject {
     private var processingService: ProcessingService?
     private var mlxClassifier: MLXClassifier?
     private var classifierSkipped = false  // True if classifier loading was intentionally skipped
+    private var classifierReady: CheckedContinuation<Void, Never>?
+    private var isClassifierReady = false
 
     // RAG services
     private let embeddingService: EmbeddingService
@@ -243,12 +245,29 @@ final class WebViewManager: NSObject {
                 // App continues to work, just uses direct GPT calls
             }
 
+            // Signal that classifier is ready (or failed)
+            isClassifierReady = true
+            classifierReady?.resume()
+            classifierReady = nil
+
             // Notify frontend of classifier state change
             let settings = settingsWithClassifierState()
             bridgeService.send(BridgeMessage(
                 type: "settingsLoaded",
                 payload: ["settings": AnyCodable(settings)]
             ))
+        }
+    }
+
+    /// Wait for the classifier to be ready (or skipped)
+    private func waitForClassifier() async {
+        if classifierSkipped || isClassifierReady { return }
+        await withCheckedContinuation { continuation in
+            if isClassifierReady {
+                continuation.resume()
+            } else {
+                classifierReady = continuation
+            }
         }
     }
 
@@ -318,9 +337,11 @@ final class WebViewManager: NSObject {
                     let streamPayload = encodeStream(stream)
                     bridgeService.send(BridgeMessage(type: "streamLoaded", payload: ["stream": AnyCodable(streamPayload)]))
 
-                    // Process live blocks (async, after stream is loaded)
+                    // Process live blocks (async, after stream is loaded and classifier is ready)
                     if let processingService {
                         Task {
+                            // Wait for classifier so live blocks route correctly
+                            await self.waitForClassifier()
                             await processingService.processStreamOpen(
                                 stream,
                                 onBlockRefreshStart: { [weak self] blockId in
@@ -345,6 +366,12 @@ final class WebViewManager: NSObject {
                                     self?.bridgeService.send(BridgeMessage(
                                         type: "blockRefreshError",
                                         payload: ["cellId": AnyCodable(blockId.uuidString), "error": AnyCodable(error.localizedDescription)]
+                                    ))
+                                },
+                                onModelSelected: { [weak self] blockId, modelId in
+                                    self?.bridgeService.send(BridgeMessage(
+                                        type: "modelSelected",
+                                        payload: ["cellId": AnyCodable(blockId.uuidString), "modelId": AnyCodable(modelId)]
                                     ))
                                 }
                             )
@@ -616,13 +643,21 @@ final class WebViewManager: NSObject {
 
             // Parse image URLs for current cell (convert ticker-asset:// to data URLs)
             let currentCellImageURLs = payload["imageURLs"]?.value as? [String] ?? []
-            let currentCellDataURLs = assetService.assetsToDataURLs(currentCellImageURLs)
-            if !currentCellDataURLs.isEmpty {
-                print("Think: Converting \(currentCellImageURLs.count) images to data URLs")
+            var allImageDataURLs = assetService.assetsToDataURLs(currentCellImageURLs)
+            if !allImageDataURLs.isEmpty {
+                print("Think: Converting \(currentCellImageURLs.count) current cell images to data URLs")
             }
 
             // Get referenced content (from Quick Panel - the highlighted text/screenshot)
             let referencedContent = payload["referencedContent"]?.value as? String
+
+            // Get referenced image URLs (screenshots from Quick Panel)
+            let referencedImageURLs = payload["referencedImageURLs"]?.value as? [String] ?? []
+            let referencedDataURLs = assetService.assetsToDataURLs(referencedImageURLs)
+            if !referencedDataURLs.isEmpty {
+                print("Think: Converting \(referencedImageURLs.count) referenced images to data URLs")
+                allImageDataURLs.append(contentsOf: referencedDataURLs)
+            }
 
             // Parse streamId for RAG retrieval and reference resolution
             var streamIdForRAG: UUID? = nil
@@ -719,7 +754,7 @@ final class WebViewManager: NSObject {
             Task { [weak self] in
                 await orchestrator.route(
                     query: resolvedCurrentCell,
-                    queryImages: currentCellDataURLs,
+                    queryImages: allImageDataURLs,
                     streamId: streamIdForRAG,
                     priorCells: priorCells,
                     sourceContext: sourceContext,

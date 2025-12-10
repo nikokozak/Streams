@@ -300,24 +300,28 @@ final class QuickPanelManager: ObservableObject {
     private func createContextCell(from ctx: QuickPanelContext, streamId: UUID, order: Int) -> Cell {
         var content = ""
 
+        // Build source attribution: "App — Window Title" or just "App"
+        let sourceAttribution = buildSourceAttribution(app: ctx.activeApp, windowTitle: ctx.windowTitle)
+
         if let text = ctx.selectedText {
             // Format as italicized quote with source info
             let escapedText = escapeHtml(text)
             content = "<p><em>\(escapedText)</em></p>"
 
-            if let app = ctx.activeApp {
-                content += "<p class=\"source-info\">— \(escapeHtml(app))</p>"
+            if let source = sourceAttribution {
+                content += "<p class=\"source-info\">— \(source)</p>"
             }
         } else if let imageData = ctx.clipboardImage, let assetService = assetService {
             // Save image via AssetService and embed as img tag
             do {
                 let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
                 // Use relative path for portability - AssetSchemeHandler resolves at render time
-                let assetUrl = "ticker-asset://\(relativePath)"
+                // Note: ticker-asset:/// (three slashes) ensures the path isn't parsed as host
+                let assetUrl = "ticker-asset:///\(relativePath)"
                 content = "<p><img src=\"\(assetUrl)\" alt=\"Screenshot\" style=\"max-width: 100%;\"></p>"
 
-                if let app = ctx.activeApp {
-                    content += "<p class=\"source-info\">— Screenshot from \(escapeHtml(app))</p>"
+                if let source = sourceAttribution {
+                    content += "<p class=\"source-info\">— Screenshot from \(source)</p>"
                 }
             } catch {
                 print("[QuickPanel] Failed to save screenshot: \(error)")
@@ -332,6 +336,25 @@ final class QuickPanelManager: ObservableObject {
             order: order,
             sourceApp: ctx.activeApp
         )
+    }
+
+    /// Build source attribution string from app name and window title
+    private func buildSourceAttribution(app: String?, windowTitle: String?) -> String? {
+        let escapedApp = app.map { escapeHtml($0) }
+        let escapedTitle = windowTitle.map { escapeHtml($0) }
+
+        switch (escapedApp, escapedTitle) {
+        case let (app?, title?) where !title.isEmpty:
+            // Truncate long titles
+            let truncatedTitle = title.count > 60 ? String(title.prefix(57)) + "..." : title
+            return "\(app) — \(truncatedTitle)"
+        case let (app?, _):
+            return app
+        case let (nil, title?) where !title.isEmpty:
+            return title
+        default:
+            return nil
+        }
     }
 
     /// Notify the React frontend about new cells

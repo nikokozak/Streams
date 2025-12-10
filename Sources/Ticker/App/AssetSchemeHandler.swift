@@ -42,7 +42,6 @@ final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
         }
 
         guard FileManager.default.fileExists(atPath: canonicalPath) else {
-            print("AssetSchemeHandler: File not found: \(canonicalPath)")
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
         }

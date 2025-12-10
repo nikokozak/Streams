@@ -82,8 +82,21 @@ final class AssetService {
         // Parse ticker-asset:// URL to get file path
         guard assetURL.hasPrefix("ticker-asset://") else { return nil }
 
-        let filePath = String(assetURL.dropFirst("ticker-asset://".count))
-        let requestedURL = URL(fileURLWithPath: filePath)
+        var filePath = String(assetURL.dropFirst("ticker-asset://".count))
+        // Handle triple-slash URLs (ticker-asset:///path) - remove leading slash
+        if filePath.hasPrefix("/") {
+            filePath = String(filePath.dropFirst())
+        }
+
+        // Support both absolute paths (legacy) and relative paths (portable)
+        let requestedURL: URL
+        if filePath.hasPrefix("Users/") || filePath.hasPrefix("var/") {
+            // Absolute path (legacy format) - add leading slash back
+            requestedURL = URL(fileURLWithPath: "/" + filePath)
+        } else {
+            // Relative path (portable format): e.g., "streamId/filename.png"
+            requestedURL = assetsBaseDirectory.appendingPathComponent(filePath)
+        }
 
         // Security: Canonicalize paths to prevent directory traversal attacks
         let canonicalPath = requestedURL.standardized.resolvingSymlinksInPath().path

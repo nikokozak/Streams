@@ -41,7 +41,8 @@ enum Prompts {
     Provide factual, current information for a research document.
 
     Style:
-    - Use markdown: headers, bullets, bold for key terms
+    - DO NOT start with a header—one is provided automatically
+    - Use markdown: bullets, bold for key terms, ## only for subsections
     - Lead with the most relevant facts
     - Include specific data, dates, numbers
     - Cite sources inline when helpful

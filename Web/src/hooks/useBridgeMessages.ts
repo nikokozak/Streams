@@ -86,10 +86,18 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
               // Get referenced content (e.g., the quote cell from Quick Panel)
               // This is the highlighted text/screenshot that the user is asking about
               let referencedContent: string | undefined;
+              let referencedImageURLs: string[] = [];
               if (aiCell.references && aiCell.references.length > 0) {
                 const refCell = cells.find(c => c.id === aiCell.references?.[0]);
                 if (refCell) {
                   referencedContent = refCell.content;
+                  // Extract image URLs from referenced content
+                  const imgMatches = refCell.content.matchAll(/<img[^>]+src="([^"]+)"/g);
+                  for (const match of imgMatches) {
+                    if (match[1]) {
+                      referencedImageURLs.push(match[1]);
+                    }
+                  }
                 }
               }
 
@@ -100,6 +108,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
                   cellId: triggerAI,
                   currentCell: aiCell.originalPrompt || '',
                   referencedContent,  // The quote/screenshot the user selected
+                  referencedImageURLs, // Image URLs from the referenced cell
                   priorCells,
                   streamId,
                 },
@@ -336,7 +345,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         if (cell) {
           store.updateBlock(cellId, { content: htmlContent });
 
-          // Save refreshed content to Swift (preserve sourceApp)
+          // Save refreshed content to Swift (preserve all metadata)
           bridge.send({
             type: 'saveCell',
             payload: {
@@ -346,6 +355,8 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
               type: cell.type,
               order: cell.order,
               originalPrompt: cell.originalPrompt,
+              restatement: cell.restatement,
+              modelId: cell.modelId,
               processingConfig: cell.processingConfig,
               references: cell.references,
               blockName: cell.blockName,

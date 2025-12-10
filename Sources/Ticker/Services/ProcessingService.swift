@@ -28,7 +28,8 @@ final class ProcessingService {
         onBlockRefreshStart: @escaping (UUID) -> Void,
         onBlockChunk: @escaping (UUID, String) -> Void,
         onBlockRefreshComplete: @escaping (UUID, String) -> Void,
-        onBlockRefreshError: @escaping (UUID, Error) -> Void
+        onBlockRefreshError: @escaping (UUID, Error) -> Void,
+        onModelSelected: ((UUID, String) -> Void)? = nil
     ) async {
         // Find blocks that need refresh on stream open
         let liveBlocks = stream.cells.filter {
@@ -59,7 +60,8 @@ final class ProcessingService {
                         onStart: onBlockRefreshStart,
                         onChunk: onBlockChunk,
                         onComplete: onBlockRefreshComplete,
-                        onError: onBlockRefreshError
+                        onError: onBlockRefreshError,
+                        onModelSelected: onModelSelected
                     )
                 }
             }
@@ -115,7 +117,8 @@ final class ProcessingService {
         onStart: @escaping (UUID) -> Void,
         onChunk: @escaping (UUID, String) -> Void,
         onComplete: @escaping (UUID, String) -> Void,
-        onError: @escaping (UUID, Error) -> Void
+        onError: @escaping (UUID, Error) -> Void,
+        onModelSelected: ((UUID, String) -> Void)? = nil
     ) async {
         // Determine the prompt to use
         let prompt = block.originalPrompt ?? extractPromptFromContent(block.content)
@@ -125,7 +128,7 @@ final class ProcessingService {
             return
         }
 
-        print("[ProcessingService] Refreshing block \(block.id) with prompt: \(prompt.prefix(50))...")
+        print("[ProcessingService] Refreshing block \(block.id) with prompt: \(prompt)")
 
         // Notify start
         await MainActor.run { onStart(block.id) }
@@ -162,6 +165,11 @@ final class ProcessingService {
             onError: { error in
                 Task { @MainActor in
                     onError(block.id, error)
+                }
+            },
+            onModelSelected: { modelId in
+                Task { @MainActor in
+                    onModelSelected?(block.id, modelId)
                 }
             }
         )

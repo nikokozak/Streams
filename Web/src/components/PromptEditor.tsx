@@ -32,6 +32,10 @@ export function PromptEditor({
       const blocks = useBlockStore.getState().getBlocksArray();
       return blocks.filter((b) => {
         if (cellId && b.id === cellId) return false;
+        // Always include AI responses (even if content appears empty after HTML strip)
+        if (b.type === 'aiResponse') return true;
+        // Always include cells with a blockName or restatement
+        if (b.blockName || b.restatement) return true;
         const textContent = b.content.replace(/<[^>]*>/g, '').trim();
         if (textContent.length === 0) return false;
         return true;
