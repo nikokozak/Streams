@@ -228,6 +228,7 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
   ) => {
     const cells = store.getBlocksArray();
     const cellIndex = cells.findIndex(c => c.id === cellId);
+    const cell = store.getBlock(cellId);
 
     // Extract images from the cell content - these will be preserved visually
     const images = extractImages(cellContent);
@@ -254,7 +255,7 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
       : { originalPrompt: prompt, content: imageBlock, restatement: undefined };
     store.updateBlock(cellId, updates);
 
-    // Save cell
+    // Save cell (preserve sourceApp and references from Quick Panel)
     bridge.send({
       type: 'saveCell',
       payload: {
@@ -264,6 +265,8 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
         type: 'aiResponse',
         originalPrompt: prompt,
         order: cellOrder,
+        sourceApp: cell?.sourceApp,
+        references: cell?.references,
       },
     });
 
