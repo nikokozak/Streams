@@ -103,6 +103,19 @@ Global capture panel accessible via **Cmd+L** from any app. Captures selected te
 
 **Reference Implementation:** See `/Users/niko/Documents/ITP/ChatWindow/` for patterns (HotkeyService, SelectionReaderService, QuickPanelManager)
 
+## Known Technical Debt
+
+### MAJOR: Markdown-first editing (not yet implemented)
+Currently cells store rendered HTML and TipTap edits the rich text directly. This means users cannot edit the underlying markdown source (e.g., change `## Header` to `### Header`).
+
+**Required refactor:**
+- Store raw markdown as the source of truth, not HTML
+- Render markdown → HTML only for display
+- TipTap edits should produce markdown, not HTML
+- Consider CodeMirror/Monaco for true markdown editing, or TipTap with markdown storage
+
+This is a fundamental architecture change affecting: `CellEditor.tsx`, `markdownToHtml()`, cell persistence, AI response handling.
+
 ## Code Standards
 
 1. Delete over patch — no hacks
