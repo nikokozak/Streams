@@ -5,8 +5,8 @@ import UniformTypeIdentifiers
 /// Manages the WKWebView and Swift ↔ JS bridge
 final class WebViewManager: NSObject {
     let webView: DroppableWebView
-    private let bridgeService: BridgeService
-    private let persistence: PersistenceService?
+    let bridgeService: BridgeService
+    let persistence: PersistenceService?
     private let sourceService: SourceService?
     private let aiService: AIService
     private let perplexityService: PerplexityService

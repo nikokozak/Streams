@@ -17,9 +17,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var webViewManager: WebViewManager?
 
+    // Quick Panel services
+    private var hotkeyService: HotkeyService?
+    private var quickPanelManager: QuickPanelManager?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupMenuBar()
         setupMainWindow()
+        setupQuickPanel()
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -79,5 +84,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         webViewManager?.load()
 
         mainWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - Quick Panel Setup
+
+    private func setupQuickPanel() {
+        // Initialize Quick Panel manager on main actor
+        Task { @MainActor in
+            let manager = QuickPanelManager()
+            self.quickPanelManager = manager
+
+            // Configure with services from WebViewManager
+            if let wvm = self.webViewManager,
+               let persistence = wvm.persistence {
+                manager.configure(persistence: persistence, bridgeService: wvm.bridgeService)
+            }
+        }
+
+        // Initialize hotkey service
+        hotkeyService = HotkeyService()
+
+        // Register Quick Panel hotkey (Cmd+L)
+        hotkeyService?.register(config: .quickPanel) { [weak self] in
+            Task { @MainActor in
+                self?.quickPanelManager?.toggle()
+            }
+        }
+
+        // Register Screenshot hotkey (Cmd+;)
+        hotkeyService?.register(config: .screenshot) { [weak self] in
+            Task { @MainActor in
+                self?.captureScreenshot()
+            }
+        }
+    }
+
+    /// Capture screenshot using system tool, then show Quick Panel
+    private func captureScreenshot() {
+        // Use screencapture to capture to clipboard
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-ic"]  // Interactive, clipboard
+
+        process.terminationHandler = { [weak self] _ in
+            Task { @MainActor in
+                // Short delay to allow clipboard to update
+                try? await Task.sleep(nanoseconds: 100_000_000)  // 0.1s
+                self?.quickPanelManager?.showAfterScreenshot()
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            print("Failed to run screencapture: \(error)")
+        }
     }
 }

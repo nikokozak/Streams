@@ -1,6 +1,6 @@
 # Ticker
 
-macOS research app: Swift backend + React/TipTap frontend in WKWebView.
+macOS research app: Swift backend + React/TipTap frontend in WKWebView + global Quick Panel.
 
 ## Commands
 
@@ -14,16 +14,36 @@ cd Web && npm run typecheck
 ## Architecture
 
 ```
-Swift Services ↔ BridgeService ↔ WKWebView (React + Zustand + TipTap)
+                    AppDelegate
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+   HotkeyService    Main Window      Quick Panel
+   (global Cmd+L)   (NSWindow)       (NSPanel)
+        │                │                │
+        │           WKWebView        SwiftUI
+        │           (React)          (Native)
+        │                │                │
+        └───────> BridgeService <─────────┘
+                         │
+                  Swift Services
 ```
 
 ### Swift (`Sources/Ticker/`)
 
 | File | Purpose |
 |------|---------|
+| `App/AppDelegate.swift` | App entry, hotkeys, window management |
 | `App/WebViewManager.swift` | Central hub — all bridge message handlers |
 | `App/BridgeService.swift` | Swift ↔ JS messaging |
 | `App/AssetSchemeHandler.swift` | Serves `ticker-asset://` URLs to webview |
+| `App/QuickPanel/QuickPanelWindow.swift` | Floating NSPanel for global capture |
+| `App/QuickPanel/QuickPanelManager.swift` | Panel lifecycle, cell creation |
+| `App/QuickPanel/QuickPanelView.swift` | SwiftUI panel UI |
+| `Services/System/HotkeyService.swift` | Global hotkey registration (Carbon) |
+| `Services/System/SelectionReaderService.swift` | Read selected text (Accessibility) |
+| `Services/System/ClipboardService.swift` | Clipboard image detection |
+| `Services/StreamActivityService.swift` | Track active stream for targeting |
 | `Services/Prompts.swift` | All AI prompts — edit to tune behavior |
 | `Services/AIOrchestrator.swift` | Routes queries to AI providers |
 | `Services/AIService.swift` | OpenAI streaming (implements `LLMProvider`) |
@@ -42,7 +62,8 @@ Swift Services ↔ BridgeService ↔ WKWebView (React + Zustand + TipTap)
 | `components/StreamEditor.tsx` | Main editor surface |
 | `components/BlockWrapper.tsx` | Cell chrome — hover controls, drag handle |
 | `components/CellEditor.tsx` | TipTap editor wrapper |
-| `components/SourcePanel.tsx` | Right sidebar — sources, embeddings |
+| `components/SidePanel.tsx` | Tabbed sidebar — outline + sources |
+| `components/SearchModal.tsx` | Cmd+K hybrid search |
 | `store/blockStore.ts` | Zustand — cells, streaming state, errors |
 | `hooks/useBridgeMessages.ts` | Handles all bridge messages from Swift |
 | `utils/markdown.ts` | Markdown → sanitized HTML (DOMPurify) |
@@ -55,7 +76,32 @@ Swift Services ↔ BridgeService ↔ WKWebView (React + Zustand + TipTap)
   - `modifiers`: Transformation chain (e.g., "make shorter")
   - `versions`: Content snapshots from modifier applications
   - `originalPrompt`: User's input (for AI response cells)
+  - `sourceApp`: Origin app name (for quote cells from Quick Panel)
 - **SourceReference**: Attached file with extracted text, embeddings
+
+## Quick Panel
+
+Global capture panel accessible via **Cmd+L** from any app. Captures selected text, screenshots, and notes.
+
+**Hotkeys:**
+- `Cmd+L` — Toggle Quick Panel (captures selection before opening)
+- `Cmd+;` — Screenshot mode (triggers screencapture, then opens panel)
+
+**Input Modes:**
+| Context | Action | Result |
+|---------|--------|--------|
+| Selection + ENTER | Capture | Quote cell with sourceApp |
+| Selection + text + ENTER | Capture + note | Quote + text cells |
+| Selection + text + CMD+ENTER | Capture + AI | Quote + AI response |
+| Text only + ENTER | Note | Text cell |
+| Text only + CMD+ENTER | AI query | AI response cell |
+
+**Stream Targeting:**
+- Default: Most recently modified stream
+- After 15min idle: Show stream picker
+- No streams: Create "Untitled"
+
+**Reference Implementation:** See `/Users/niko/Documents/ITP/ChatWindow/` for patterns (HotkeyService, SelectionReaderService, QuickPanelManager)
 
 ## Code Standards
 

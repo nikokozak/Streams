@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { SourceReference, Modifier, CellVersion, bridge } from '../types';
+import { SourceReference, Modifier, CellVersion, Cell, bridge } from '../types';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 
@@ -38,6 +38,64 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
       }
       if (message.type === 'sourceRemoved' && message.payload?.id) {
         setSources(prev => prev.filter(s => s.id !== message.payload?.id));
+      }
+
+      // Quick Panel: cells added via global hotkey capture
+      if (message.type === 'quickPanelCellsAdded' && message.payload?.cells) {
+        const addedStreamId = message.payload.streamId as string;
+        const cells = message.payload.cells as Cell[];
+        const triggerAI = message.payload.triggerAI as string | undefined;
+
+        console.log('[QuickPanel] Cells added:', { streamId: addedStreamId, cellCount: cells.length, triggerAI });
+
+        // Only process if this is for the current stream
+        if (addedStreamId === streamId) {
+          // Add each cell to the store
+          for (const cell of cells) {
+            store.addBlock({
+              id: cell.id,
+              streamId: cell.streamId,
+              content: cell.content,
+              type: cell.type,
+              order: cell.order,
+              sourceBinding: cell.sourceBinding || null,
+              originalPrompt: cell.originalPrompt,
+              references: cell.references,
+              sourceApp: cell.sourceApp,
+              createdAt: cell.createdAt || new Date().toISOString(),
+              updatedAt: cell.updatedAt || new Date().toISOString(),
+            });
+          }
+
+          // If triggerAI is set, start AI streaming for that cell
+          if (triggerAI) {
+            const aiCell = cells.find(c => c.id === triggerAI);
+            if (aiCell) {
+              console.log('[QuickPanel] Triggering AI for cell:', triggerAI);
+              store.startStreaming(triggerAI);
+
+              // Get prior cells for context
+              const priorCells = store.blockOrder
+                .map(id => store.getBlock(id))
+                .filter((b): b is NonNullable<typeof b> => b !== undefined && b.id !== triggerAI)
+                .map(b => ({
+                  content: b.content,
+                  type: b.type,
+                }));
+
+              // Send think request to Swift
+              bridge.send({
+                type: 'think',
+                payload: {
+                  cellId: triggerAI,
+                  currentCell: aiCell.originalPrompt || '',
+                  priorCells,
+                  streamId,
+                },
+              });
+            }
+          }
+        }
       }
 
       // Request for current stream ID (for native file drops)

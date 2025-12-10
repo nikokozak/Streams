@@ -134,6 +134,13 @@ final class PersistenceService {
             }
         }
 
+        migrator.registerMigration("v8_quick_panel") { db in
+            // Add source_app column to cells for tracking capture source
+            try db.alter(table: "cells") { t in
+                t.add(column: "source_app", .text)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
 
@@ -177,7 +184,7 @@ final class PersistenceService {
 
             let sourceRows = try Row.fetchAll(db, sql: "SELECT * FROM sources WHERE stream_id = ? ORDER BY added_at", arguments: [id.uuidString])
             let cellRows = try Row.fetchAll(db, sql: """
-                SELECT id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name
+                SELECT id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name, source_app
                 FROM cells
                 WHERE stream_id = ?
                 ORDER BY position
@@ -238,6 +245,7 @@ final class PersistenceService {
                 }
 
                 let blockName: String? = row["block_name"]
+                let sourceApp: String? = row["source_app"]
 
                 return Cell(
                     id: UUID(uuidString: row["id"])!,
@@ -255,7 +263,8 @@ final class PersistenceService {
                     activeVersionId: activeVersionId,
                     processingConfig: processingConfig,
                     references: references,
-                    blockName: blockName
+                    blockName: blockName,
+                    sourceApp: sourceApp
                 )
             }
 
@@ -293,6 +302,45 @@ final class PersistenceService {
     func deleteStream(id: UUID) throws {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM streams WHERE id = ?", arguments: [id.uuidString])
+        }
+    }
+
+    /// Save a new stream
+    func saveStream(_ stream: Stream) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: """
+                INSERT INTO streams (id, title, created_at, updated_at)
+                VALUES (?, ?, ?, ?)
+            """, arguments: [
+                stream.id.uuidString,
+                stream.title,
+                stream.createdAt.timeIntervalSince1970,
+                stream.updatedAt.timeIntervalSince1970
+            ])
+        }
+    }
+
+    /// Get the most recently modified stream ID
+    func getRecentlyModifiedStreamId() throws -> UUID? {
+        try dbQueue.read { db in
+            let row = try Row.fetchOne(db, sql: """
+                SELECT id FROM streams
+                ORDER BY updated_at DESC
+                LIMIT 1
+            """)
+            return row.flatMap { UUID(uuidString: $0["id"]) }
+        }
+    }
+
+    /// Get the next cell order for a stream
+    func getNextCellOrder(streamId: UUID) throws -> Int {
+        try dbQueue.read { db in
+            let row = try Row.fetchOne(db, sql: """
+                SELECT COALESCE(MAX(position), -1) + 1 as next_order
+                FROM cells
+                WHERE stream_id = ?
+            """, arguments: [streamId.uuidString])
+            return row?["next_order"] ?? 0
         }
     }
 
@@ -343,8 +391,8 @@ final class PersistenceService {
 
             try db.execute(
                 sql: """
-                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO cells (id, stream_id, type, content, restatement, original_prompt, state, source_binding_json, metadata_json, created_at, updated_at, position, modifiers_json, versions_json, active_version_id, processing_config_json, references_json, block_name, source_app)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(id) DO UPDATE SET
                         content = excluded.content,
                         restatement = excluded.restatement,
@@ -363,7 +411,8 @@ final class PersistenceService {
                         active_version_id = excluded.active_version_id,
                         processing_config_json = excluded.processing_config_json,
                         references_json = excluded.references_json,
-                        block_name = excluded.block_name
+                        block_name = excluded.block_name,
+                        source_app = excluded.source_app
                 """,
                 arguments: [
                     cell.id.uuidString,
@@ -383,7 +432,8 @@ final class PersistenceService {
                     activeVersionIdStr,
                     processingConfigJson,
                     referencesJson,
-                    cell.blockName
+                    cell.blockName,
+                    cell.sourceApp
                 ]
             )
 

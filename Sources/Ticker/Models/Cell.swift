@@ -68,6 +68,8 @@ struct Cell: Identifiable, Codable {
     var blockName: String?
     /// ID of the model that generated this response (e.g., "gpt-4o", "sonar")
     var modelId: String?
+    /// Source application name (for quote cells captured via Quick Panel)
+    var sourceApp: String?
 
     init(
         id: UUID = UUID(),
@@ -86,7 +88,8 @@ struct Cell: Identifiable, Codable {
         processingConfig: ProcessingConfig? = nil,
         references: [UUID]? = nil,
         blockName: String? = nil,
-        modelId: String? = nil
+        modelId: String? = nil,
+        sourceApp: String? = nil
     ) {
         self.id = id
         self.streamId = streamId
@@ -105,6 +108,7 @@ struct Cell: Identifiable, Codable {
         self.references = references
         self.blockName = blockName
         self.modelId = modelId
+        self.sourceApp = sourceApp
     }
 }
 

@@ -46,6 +46,8 @@ export interface Cell {
   blockName?: string;
   /** ID of the model that generated this response (e.g., "gpt-4o", "sonar") */
   modelId?: string;
+  /** Source application name (for quote cells captured via Quick Panel) */
+  sourceApp?: string;
 }
 
 /** The type of cell content */
