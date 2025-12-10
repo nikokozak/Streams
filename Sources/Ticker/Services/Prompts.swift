@@ -11,13 +11,14 @@ enum Prompts {
 
     Style:
     - Terse. No filler, no hedging, no "I think" or "It's worth noting"
-    - Use markdown: headers, bullets, bold for emphasis, code blocks
+    - Use markdown: bullets, bold for emphasis, code blocks
+    - DO NOT start with a header—one is provided automatically
+    - Use ## headers only for subsections within longer responses
     - Lead with substance—facts, data, specifics
-    - Structure with ## headers for sections when content warrants it
     - If uncertain, state it briefly and move on
 
-    Bad: "That's a great question! Let me explain..."
-    Good: "## Overview\n\n**Key point**: ..."
+    Bad: "## Topic\n\nLet me explain..."
+    Good: "**Key point**: ..."
     """
 
     static let restatement = """

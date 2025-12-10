@@ -2,7 +2,8 @@ import { useRef, useCallback, useEffect, useState } from 'react';
 import { Stream, Cell as CellType, SourceReference, bridge } from '../types';
 import { Cell } from './Cell';
 import { BlockWrapper } from './BlockWrapper';
-import { SourcePanel } from './SourcePanel';
+import { SidePanel } from './SidePanel';
+import { SearchModal } from './SearchModal';
 import { ReferencePreview } from './ReferencePreview';
 import { CellOverlay } from './CellOverlay';
 import { stripHtml, extractImages, extractImageURLs, buildImageBlock, isEmptyCell } from '../utils/html';
@@ -15,9 +16,14 @@ interface StreamEditorProps {
   stream: Stream;
   onBack: () => void;
   onDelete: () => void;
+  onNavigateToStream?: (streamId: string, targetId: string, targetType?: 'cell' | 'source') => void;
+  pendingCellId?: string | null;
+  pendingSourceId?: string | null;
+  onClearPendingCell?: () => void;
+  onClearPendingSource?: () => void;
 }
 
-export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
+export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pendingCellId, pendingSourceId, onClearPendingCell, onClearPendingSource }: StreamEditorProps) {
   // Use Zustand store for block state
   const store = useBlockStore();
 
@@ -32,6 +38,8 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [overlayBlockId, setOverlayBlockId] = useState<string | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [highlightedSourceId, setHighlightedSourceId] = useState<string | null>(null);
 
   const cellFocusRefs = useRef<Map<string, () => void>>(new Map());
   const titleInputRef = useRef<HTMLInputElement>(null);
@@ -41,6 +49,40 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     store.loadStream(stream.id, stream.cells);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream.id]);
+
+  // Cmd+K to open search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setShowSearch(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Handle pending cell navigation (from cross-stream search)
+  // Note: handleScrollToCell is defined with useCallback below, so this effect
+  // runs after the function is available
+  const pendingCellIdRef = useRef(pendingCellId);
+  pendingCellIdRef.current = pendingCellId;
+
+  useEffect(() => {
+    if (pendingCellIdRef.current && store.streamId === stream.id) {
+      // Wait for DOM to be ready
+      const cellId = pendingCellIdRef.current;
+      setTimeout(() => {
+        const cellElement = document.querySelector(`[data-block-id="${cellId}"]`);
+        if (cellElement) {
+          cellElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          cellElement.classList.add('block-wrapper--highlighted');
+          setTimeout(() => cellElement.classList.remove('block-wrapper--highlighted'), 2000);
+        }
+        onClearPendingCell?.();
+      }, 200);
+    }
+  }, [store.streamId, stream.id, onClearPendingCell]);
 
   // Create initial cell if stream is empty
   useEffect(() => {
@@ -438,6 +480,11 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     }
   }, []);
 
+  // Navigate to a source in the source panel (for chunk search results)
+  const handleNavigateToSource = useCallback((sourceId: string) => {
+    setHighlightedSourceId(sourceId);
+  }, []);
+
   // Title editing handlers
   const startEditingTitle = useCallback(() => {
     setIsEditingTitle(true);
@@ -598,16 +645,34 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
           })}
         </div>
 
-        <SourcePanel
+        <SidePanel
+          cells={cells}
+          focusedCellId={focusedBlockId}
+          onCellClick={handleScrollToCell}
           streamId={stream.id}
           sources={sources}
           onSourceAdded={handleSourceAdded}
           onSourceRemoved={handleSourceRemoved}
+          highlightedSourceId={highlightedSourceId || pendingSourceId}
+          onClearHighlight={() => {
+            setHighlightedSourceId(null);
+            onClearPendingSource?.();
+          }}
         />
       </div>
 
       {/* Global reference preview tooltip */}
       <ReferencePreview onScrollToCell={handleScrollToCell} />
+
+      {/* Search modal */}
+      <SearchModal
+        isOpen={showSearch}
+        onClose={() => setShowSearch(false)}
+        currentStreamId={stream.id}
+        onNavigateToCell={handleScrollToCell}
+        onNavigateToStream={onNavigateToStream || (() => {})}
+        onNavigateToSource={handleNavigateToSource}
+      />
     </div>
   );
 }

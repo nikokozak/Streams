@@ -163,6 +163,12 @@ final class PersistenceService {
         }
     }
 
+    func getStreamTitle(id: UUID) throws -> String? {
+        try dbQueue.read { db in
+            try Row.fetchOne(db, sql: "SELECT title FROM streams WHERE id = ?", arguments: [id.uuidString])?["title"]
+        }
+    }
+
     func loadStream(id: UUID) throws -> Stream? {
         try dbQueue.read { db in
             guard let streamRow = try Row.fetchOne(db, sql: "SELECT * FROM streams WHERE id = ?", arguments: [id.uuidString]) else {
@@ -618,4 +624,92 @@ final class PersistenceService {
             )
         }
     }
+
+    // MARK: - Text Search
+
+    /// Search cells by text, returning results split by current vs other streams.
+    /// Each stream category gets its own limit to ensure cross-stream coverage.
+    /// Searches across content, originalPrompt, restatement, and blockName fields.
+    func textSearchCells(
+        query: String,
+        currentStreamId: UUID,
+        limitPerCategory: Int = 15
+    ) throws -> (currentStream: [CellSearchResult], otherStreams: [CellSearchResult]) {
+        // Escape SQL LIKE special characters to prevent injection
+        let escaped = query
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let pattern = "%\(escaped)%"
+
+        return try dbQueue.read { db in
+            // Search current stream
+            let currentResults = try Row.fetchAll(db, sql: """
+                SELECT c.id, c.stream_id, s.title as stream_title,
+                       c.content, c.type, c.restatement, c.original_prompt, c.block_name
+                FROM cells c
+                JOIN streams s ON c.stream_id = s.id
+                WHERE c.stream_id = ?
+                  AND (c.content LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.original_prompt LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.restatement LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.block_name LIKE ? ESCAPE '\\' COLLATE NOCASE)
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+            """, arguments: [currentStreamId.uuidString, pattern, pattern, pattern, pattern, limitPerCategory])
+            .map { row in
+                CellSearchResult(
+                    cellId: UUID(uuidString: row["id"])!,
+                    streamId: UUID(uuidString: row["stream_id"])!,
+                    streamTitle: row["stream_title"],
+                    content: row["content"],
+                    cellType: row["type"],
+                    restatement: row["restatement"],
+                    originalPrompt: row["original_prompt"],
+                    blockName: row["block_name"]
+                )
+            }
+
+            // Search other streams
+            let otherResults = try Row.fetchAll(db, sql: """
+                SELECT c.id, c.stream_id, s.title as stream_title,
+                       c.content, c.type, c.restatement, c.original_prompt, c.block_name
+                FROM cells c
+                JOIN streams s ON c.stream_id = s.id
+                WHERE c.stream_id != ?
+                  AND (c.content LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.original_prompt LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.restatement LIKE ? ESCAPE '\\' COLLATE NOCASE
+                       OR c.block_name LIKE ? ESCAPE '\\' COLLATE NOCASE)
+                ORDER BY c.updated_at DESC
+                LIMIT ?
+            """, arguments: [currentStreamId.uuidString, pattern, pattern, pattern, pattern, limitPerCategory])
+            .map { row in
+                CellSearchResult(
+                    cellId: UUID(uuidString: row["id"])!,
+                    streamId: UUID(uuidString: row["stream_id"])!,
+                    streamTitle: row["stream_title"],
+                    content: row["content"],
+                    cellType: row["type"],
+                    restatement: row["restatement"],
+                    originalPrompt: row["original_prompt"],
+                    blockName: row["block_name"]
+                )
+            }
+
+            return (currentResults, otherResults)
+        }
+    }
+}
+
+/// Result from text search on cells
+struct CellSearchResult {
+    let cellId: UUID
+    let streamId: UUID
+    let streamTitle: String
+    let content: String
+    let cellType: String
+    let restatement: String?
+    let originalPrompt: String?
+    let blockName: String?
 }

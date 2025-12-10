@@ -63,6 +63,22 @@ export function App() {
     }
   };
 
+  // Navigate to a different stream and scroll to a specific cell or source
+  const [pendingCellId, setPendingCellId] = useState<string | null>(null);
+  const [pendingSourceId, setPendingSourceId] = useState<string | null>(null);
+
+  const handleNavigateToStream = (streamId: string, targetId: string, targetType: 'cell' | 'source' = 'cell') => {
+    if (targetType === 'source') {
+      setPendingSourceId(targetId);
+      setPendingCellId(null);
+    } else {
+      setPendingCellId(targetId);
+      setPendingSourceId(null);
+    }
+    setIsLoadingStream(true);
+    bridge.send({ type: 'loadStream', payload: { id: streamId } });
+  };
+
   const handleOpenSettings = () => {
     setView('settings');
   };
@@ -81,6 +97,11 @@ export function App() {
         stream={currentStream}
         onBack={handleBackToList}
         onDelete={handleDeleteStream}
+        onNavigateToStream={handleNavigateToStream}
+        pendingCellId={pendingCellId}
+        pendingSourceId={pendingSourceId}
+        onClearPendingCell={() => setPendingCellId(null)}
+        onClearPendingSource={() => setPendingSourceId(null)}
       />
     );
   }

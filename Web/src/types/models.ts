@@ -131,3 +131,27 @@ export interface AutoTransformRule {
   /** The transformation to apply (e.g., "summarize") */
   transformation: string;
 }
+
+// MARK: - Search Types
+
+/** Result from hybrid search */
+export interface SearchResult {
+  id: string;
+  streamId: string;
+  streamTitle: string;
+  sourceType: 'cell' | 'chunk';
+  title: string;
+  snippet: string;
+  cellType?: CellType;
+  /** Source ID for chunk results (to navigate to source panel) */
+  sourceId?: string;
+  sourceName?: string;
+  similarity?: number;
+  matchType: 'text' | 'semantic' | 'both';
+}
+
+/** Response from hybrid search API */
+export interface HybridSearchResults {
+  currentStreamResults: SearchResult[];
+  otherStreamResults: SearchResult[];
+}

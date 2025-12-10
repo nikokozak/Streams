@@ -20,6 +20,7 @@ final class WebViewManager: NSObject {
     private let embeddingService: EmbeddingService
     private let chunkingService: ChunkingService
     private var retrievalService: RetrievalService?
+    private var searchService: SearchService?
 
     // Asset management
     private let assetService = AssetService()
@@ -71,6 +72,13 @@ final class WebViewManager: NSObject {
             )
             orchestrator.setRetrievalService(retrievalService!)
 
+            // Create SearchService for hybrid search
+            self.searchService = SearchService(
+                persistence: p,
+                retrieval: retrievalService!,
+                embedding: embeddingService
+            )
+
             self.processingService = ProcessingService(
                 orchestrator: orchestrator,
                 dependencyService: dependencyService,
@@ -81,6 +89,7 @@ final class WebViewManager: NSObject {
             self.persistence = nil
             self.sourceService = nil
             self.retrievalService = nil
+            self.searchService = nil
             self.processingService = nil
         }
 
@@ -918,6 +927,45 @@ final class WebViewManager: NSObject {
                 "relativePath": AnyCodable(relativePath),
                 "fullPath": AnyCodable(fullPath)
             ]))
+
+        case "hybridSearch":
+            guard let payload = message.payload,
+                  let query = payload["query"]?.value as? String,
+                  let currentStreamIdStr = payload["currentStreamId"]?.value as? String,
+                  let currentStreamId = UUID(uuidString: currentStreamIdStr),
+                  let callbackId = message.callbackId else {
+                print("Invalid hybridSearch payload")
+                return
+            }
+
+            let limit = payload["limit"]?.value as? Int ?? 20
+
+            guard let searchService = searchService else {
+                bridgeService.respondWithError(to: callbackId, error: "Search service not available")
+                return
+            }
+
+            Task {
+                do {
+                    let results = try await searchService.hybridSearch(
+                        query: query,
+                        currentStreamId: currentStreamId,
+                        limit: limit
+                    )
+
+                    // Encode results to JSON-compatible format
+                    let encoder = JSONEncoder()
+                    let data = try encoder.encode(results)
+                    let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
+
+                    bridgeService.respond(to: callbackId, with: [
+                        "currentStreamResults": AnyCodable(json["currentStreamResults"]),
+                        "otherStreamResults": AnyCodable(json["otherStreamResults"])
+                    ])
+                } catch {
+                    bridgeService.respondWithError(to: callbackId, error: error.localizedDescription)
+                }
+            }
 
         default:
             print("Unknown message type: \(message.type)")
