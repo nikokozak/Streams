@@ -133,9 +133,9 @@ final class QuickPanelManager: ObservableObject {
         // Position at captured location
         panel.position(at: capturedContext.panelPosition)
 
-        // Show panel
-        panel.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        // Show panel without bringing main window forward
+        panel.orderFrontRegardless()
+        panel.makeKey()
 
         isVisible = true
 

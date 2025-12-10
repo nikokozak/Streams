@@ -2,8 +2,8 @@ import AppKit
 
 /// Custom NSPanel for the Quick Panel feature
 /// Ephemeral floating panel that appears near cursor/selection
-/// Auto-dismisses on ESC
-final class QuickPanelWindow: NSPanel {
+/// Auto-dismisses on ESC or blur (clicking outside)
+final class QuickPanelWindow: NSPanel, NSWindowDelegate {
 
     // MARK: - Configuration
 
@@ -31,6 +31,14 @@ final class QuickPanelWindow: NSPanel {
 
         configurePanel()
         setupVisualEffect()
+        delegate = self
+    }
+
+    // MARK: - NSWindowDelegate (Blur Dismissal)
+
+    func windowDidResignKey(_ notification: Notification) {
+        // Auto-dismiss when user clicks outside the panel
+        onDismiss?()
     }
 
     private func configurePanel() {
