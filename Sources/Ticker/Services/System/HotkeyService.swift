@@ -19,6 +19,12 @@ struct HotkeyConfig {
         modifiers: UInt32(cmdKey),      // Command
         id: 2
     )
+
+    static let mainWindow = HotkeyConfig(
+        keyCode: 49,                    // Space
+        modifiers: UInt32(controlKey),  // Control
+        id: 3
+    )
 }
 
 /// Global hotkey service using Carbon RegisterEventHotKey

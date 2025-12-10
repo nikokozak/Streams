@@ -19,6 +19,11 @@ struct QuickPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Spacing.sm) {
+            // Ephemeral conversation response area (above everything else)
+            if manager.ephemeralConversation.isActive {
+                responseArea
+            }
+
             // Error display
             if let error = manager.error {
                 errorView(error)
@@ -119,6 +124,92 @@ struct QuickPanelView: View {
         return "Context attached"
     }
 
+    // MARK: - Ephemeral Conversation Response Area
+
+    private var responseArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: Spacing.sm) {
+                    ForEach(Array(manager.ephemeralConversation.turns.enumerated()), id: \.offset) { index, turn in
+                        turnView(turn, id: index)
+                    }
+
+                    // Currently streaming response
+                    if manager.ephemeralConversation.isStreaming {
+                        streamingResponseView
+                            .id("streaming")
+                    }
+                }
+                .padding(Spacing.sm)
+            }
+            .frame(maxHeight: 250)
+            .background(Colors.hoverBackground.opacity(0.3))
+            .cornerRadius(Spacing.radiusMd)
+            .onChange(of: manager.ephemeralConversation.currentResponse) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("streaming", anchor: .bottom)
+                }
+            }
+            .onChange(of: manager.ephemeralConversation.turns.count) { _, _ in
+                if let lastIndex = manager.ephemeralConversation.turns.indices.last {
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        proxy.scrollTo(lastIndex, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private func turnView(_ turn: ConversationTurn, id: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Role indicator
+            Text(turn.role == .user ? "You" : "AI")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Colors.tertiaryText)
+
+            // Content - render markdown for AI responses
+            if turn.role == .assistant {
+                MarkdownContentView(content: turn.content)
+            } else {
+                Text(turn.content)
+                    .font(.system(size: 12))
+                    .foregroundColor(Colors.secondaryText)
+                    .textSelection(.enabled)
+            }
+        }
+        .padding(.vertical, Spacing.xs)
+        .id(id)
+    }
+
+    private var streamingResponseView: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text("AI")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundColor(Colors.tertiaryText)
+
+            if manager.ephemeralConversation.currentResponse.isEmpty {
+                // Typing indicator when waiting for first chunk
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Circle()
+                            .fill(Colors.tertiaryText)
+                            .frame(width: 4, height: 4)
+                    }
+                }
+                .padding(.vertical, 4)
+            } else {
+                // Render streaming content with markdown + cursor
+                HStack(alignment: .bottom, spacing: 0) {
+                    MarkdownContentView(content: manager.ephemeralConversation.currentResponse)
+                    Text(" ●")
+                        .font(.system(size: 10))
+                        .foregroundColor(Colors.primaryAccent)
+                }
+            }
+        }
+        .padding(.vertical, Spacing.xs)
+    }
+
     // MARK: - Input Field
 
     private var inputField: some View {
@@ -126,10 +217,11 @@ struct QuickPanelView: View {
             QuickPanelInputField(
                 text: $manager.inputText,
                 placeholder: placeholderText,
-                isLoading: manager.isLoading,
+                isLoading: manager.isLoading || manager.ephemeralConversation.isStreaming,
                 onSubmit: handleSubmit,
                 onCancel: { manager.handleEscape() },
-                onCmdEnter: handleCmdSubmit
+                onCmdEnter: handleCmdSubmit,
+                onOptionEnter: handleOptionSubmit
             )
 
             if manager.isLoading {
@@ -169,11 +261,15 @@ struct QuickPanelView: View {
 
     private var modeHintsBar: some View {
         HStack(spacing: Spacing.md) {
-            Text("↵ capture")
+            Text("↵ save")
                 .font(.system(size: 9))
                 .foregroundColor(Colors.secondaryText.opacity(0.6))
 
-            Text("⌘↵ AI")
+            Text("⌘↵ AI+save")
+                .font(.system(size: 9))
+                .foregroundColor(Colors.secondaryText.opacity(0.6))
+
+            Text("⌥↵ ask")
                 .font(.system(size: 9))
                 .foregroundColor(Colors.secondaryText.opacity(0.6))
 
@@ -237,6 +333,14 @@ struct QuickPanelView: View {
             await manager.handleCmdEnter()
         }
     }
+
+    private func handleOptionSubmit() {
+        let hasInput = !manager.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        guard hasInput, !manager.isLoading, !manager.ephemeralConversation.isStreaming else { return }
+        Task {
+            await manager.handleOptionEnter()
+        }
+    }
 }
 
 // MARK: - Quick Panel Input Field (NSTextView wrapper)
@@ -248,6 +352,7 @@ struct QuickPanelInputField: NSViewRepresentable {
     var onSubmit: () -> Void
     var onCancel: () -> Void
     var onCmdEnter: (() -> Void)?
+    var onOptionEnter: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -441,11 +546,132 @@ class QuickPanelTextView: NSTextView {
                 coordinator?.parent.onCmdEnter?()
                 return
             }
+            if event.modifierFlags.contains(.option) {
+                coordinator?.parent.onOptionEnter?()
+                return
+            }
             // Plain Enter submits
             coordinator?.parent.onSubmit()
             return
         }
 
         super.keyDown(with: event)
+    }
+}
+
+// MARK: - Markdown Rendering
+
+/// Renders markdown content with code block support
+private struct MarkdownContentView: View {
+    let content: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(parseBlocks(content)) { block in
+                switch block {
+                case .text(let text):
+                    MarkdownTextView(text: text)
+                case .code(let lang, let code):
+                    CodeBlockView(language: lang, code: code)
+                }
+            }
+        }
+    }
+
+    private func parseBlocks(_ input: String) -> [ContentBlock] {
+        var blocks: [ContentBlock] = []
+        if input.isEmpty { return [] }
+
+        let components = input.components(separatedBy: "```")
+
+        for (index, component) in components.enumerated() {
+            if index % 2 == 0 {
+                // Text block
+                let trimmed = component.trimmingCharacters(in: .newlines)
+                if !trimmed.isEmpty {
+                    blocks.append(.text(trimmed))
+                }
+            } else {
+                // Code block - first line is language
+                let lines = component.components(separatedBy: .newlines)
+                let lang = lines.first?.trimmingCharacters(in: .whitespaces) ?? ""
+                let code = lines.dropFirst().joined(separator: "\n").trimmingCharacters(in: .newlines)
+                blocks.append(.code(lang.isEmpty ? nil : lang, code))
+            }
+        }
+        return blocks
+    }
+}
+
+/// Renders inline markdown text using AttributedString
+private struct MarkdownTextView: View {
+    let text: String
+
+    var body: some View {
+        if let attributed = try? AttributedString(
+            markdown: text,
+            options: AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+        ) {
+            Text(attributed)
+                .font(.system(size: 12))
+                .foregroundColor(Colors.primaryText)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        } else {
+            Text(text)
+                .font(.system(size: 12))
+                .foregroundColor(Colors.primaryText)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+    }
+}
+
+/// Renders a fenced code block with optional language label
+private struct CodeBlockView: View {
+    let language: String?
+    let code: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let lang = language, !lang.isEmpty {
+                HStack {
+                    Text(lang.uppercased())
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(Colors.secondaryText)
+                    Spacer()
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Colors.hoverBackground)
+            }
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(code)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(Colors.primaryText)
+                    .padding(8)
+                    .textSelection(.enabled)
+            }
+        }
+        .background(Colors.hoverBackground.opacity(0.5))
+        .cornerRadius(6)
+    }
+}
+
+/// Content block type for markdown parsing
+private enum ContentBlock: Identifiable {
+    case text(String)
+    case code(String?, String)
+
+    var id: String {
+        switch self {
+        case .text(let s): return "text-\(s.hashValue)"
+        case .code(_, let c): return "code-\(c.hashValue)"
+        }
     }
 }

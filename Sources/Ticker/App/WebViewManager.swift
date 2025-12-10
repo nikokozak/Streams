@@ -10,7 +10,7 @@ final class WebViewManager: NSObject {
     private let sourceService: SourceService?
     private let aiService: AIService
     private let perplexityService: PerplexityService
-    private let orchestrator: AIOrchestrator
+    let orchestrator: AIOrchestrator  // Exposed for Quick Panel ephemeral AI
     private let dependencyService: DependencyService
     private var processingService: ProcessingService?
     private var mlxClassifier: MLXClassifier?
@@ -532,6 +532,11 @@ final class WebViewManager: NSObject {
                 return
             }
             do {
+                // Get cell content before deleting to extract asset URLs
+                if let content = try persistence.getCellContent(id: id) {
+                    cleanupAssetsInContent(content)
+                }
+
                 // Remove from dependency graph
                 dependencyService.removeCell(id: id)
 
@@ -1325,5 +1330,29 @@ extension WebViewManager: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         print("WebView: Failed provisional navigation: \(error.localizedDescription)")
+    }
+
+    // MARK: - Asset Cleanup
+
+    /// Extract ticker-asset:// URLs from HTML content and delete the associated files
+    private func cleanupAssetsInContent(_ content: String) {
+        // Match ticker-asset:// URLs in src attributes
+        let pattern = #"ticker-asset:///?([^"'\s>]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+
+        let range = NSRange(content.startIndex..<content.endIndex, in: content)
+        let matches = regex.matches(in: content, range: range)
+
+        for match in matches {
+            guard let pathRange = Range(match.range(at: 1), in: content) else { continue }
+            let relativePath = String(content[pathRange])
+
+            // Delete the asset file
+            do {
+                try assetService.deleteAsset(relativePath: relativePath)
+            } catch {
+                print("Failed to delete asset \(relativePath): \(error)")
+            }
+        }
     }
 }

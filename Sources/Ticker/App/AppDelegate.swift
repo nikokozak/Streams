@@ -197,7 +197,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // Configure with services from WebViewManager
             if let wvm = self.webViewManager,
                let persistence = wvm.persistence {
-                manager.configure(persistence: persistence, bridgeService: wvm.bridgeService)
+                manager.configure(
+                    persistence: persistence,
+                    bridgeService: wvm.bridgeService,
+                    orchestrator: wvm.orchestrator
+                )
             }
         }
 
@@ -215,6 +219,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hotkeyService?.register(config: .screenshot) { [weak self] in
             Task { @MainActor in
                 self?.captureScreenshot()
+            }
+        }
+
+        // Register Main Window toggle hotkey (Ctrl+Space)
+        hotkeyService?.register(config: .mainWindow) { [weak self] in
+            Task { @MainActor in
+                self?.toggleMainWindow()
             }
         }
     }

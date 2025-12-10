@@ -489,6 +489,13 @@ final class PersistenceService {
         }
     }
 
+    /// Fetch a single cell's content by ID (used for asset cleanup)
+    func getCellContent(id: UUID) throws -> String? {
+        try dbQueue.read { db in
+            try String.fetchOne(db, sql: "SELECT content FROM cells WHERE id = ?", arguments: [id.uuidString])
+        }
+    }
+
     func deleteCell(id: UUID) throws {
         try dbQueue.write { db in
             try db.execute(sql: "DELETE FROM cells WHERE id = ?", arguments: [id.uuidString])

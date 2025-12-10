@@ -1,6 +1,37 @@
 import AppKit
 import SwiftUI
 
+// MARK: - Ephemeral Conversation Model
+
+/// A single turn in an ephemeral conversation
+struct ConversationTurn: Equatable {
+    enum Role {
+        case user
+        case assistant
+    }
+
+    let role: Role
+    let content: String
+    let contextIncluded: Bool  // True if this turn included captured context
+}
+
+/// In-memory ephemeral conversation state (not persisted)
+struct EphemeralConversation: Equatable {
+    var isStreaming: Bool = false
+    var currentResponse: String = ""
+    var turns: [ConversationTurn] = []
+
+    var isActive: Bool {
+        !turns.isEmpty || isStreaming
+    }
+
+    mutating func clear() {
+        isStreaming = false
+        currentResponse = ""
+        turns = []
+    }
+}
+
 /// Manages the Quick Panel lifecycle, positioning, and state
 /// Coordinates between services (cursor, selection) and the panel window
 @MainActor
@@ -14,6 +45,7 @@ final class QuickPanelManager: ObservableObject {
     @Published var isLoading: Bool = false
     @Published var error: String?
     @Published var statusMessage: String?  // Temporary feedback (success/info messages)
+    @Published var ephemeralConversation = EphemeralConversation()
 
     // MARK: - Services
 
@@ -22,6 +54,12 @@ final class QuickPanelManager: ObservableObject {
     private weak var persistence: PersistenceService?
     private weak var bridgeService: BridgeService?
     private var assetService: AssetService?
+    private weak var orchestrator: AIOrchestrator?
+
+    // MARK: - Streaming Task
+
+    private var streamingTask: Task<Void, Never>?
+    private var isStreamingCancelled = false  // Explicit flag since nested Tasks don't inherit cancellation
 
     // MARK: - Height Management
 
@@ -48,10 +86,16 @@ final class QuickPanelManager: ObservableObject {
     }
 
     /// Configure services after initialization (for dependency injection)
-    func configure(persistence: PersistenceService, bridgeService: BridgeService, assetService: AssetService? = nil) {
+    func configure(
+        persistence: PersistenceService,
+        bridgeService: BridgeService,
+        assetService: AssetService? = nil,
+        orchestrator: AIOrchestrator? = nil
+    ) {
         self.persistence = persistence
         self.bridgeService = bridgeService
         self.assetService = assetService ?? AssetService()
+        self.orchestrator = orchestrator
     }
 
     // MARK: - Public API
@@ -147,10 +191,22 @@ final class QuickPanelManager: ObservableObject {
 
     /// Hide the quick panel
     func hide() {
+        // Cancel any in-flight streaming to avoid orphan AI calls
+        cancelStreaming()
+
         panel?.orderOut(nil)
         isVisible = false
         resetState()
         statusMessage = nil
+        // Note: ephemeralConversation is intentionally preserved so user can re-reference
+    }
+
+    /// Cancel any active streaming task
+    private func cancelStreaming() {
+        isStreamingCancelled = true
+        streamingTask?.cancel()
+        streamingTask = nil
+        ephemeralConversation.isStreaming = false
     }
 
     /// Reset state for new session
@@ -172,15 +228,101 @@ final class QuickPanelManager: ObservableObject {
         await addToStream(triggerAI: true)
     }
 
+    /// Handle Option+Enter - ephemeral AI conversation (not saved)
+    func handleOptionEnter() async {
+        let query = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return }
+
+        guard let orchestrator = orchestrator else {
+            error = "AI not configured"
+            return
+        }
+
+        // Cancel any existing streaming task
+        streamingTask?.cancel()
+        isStreamingCancelled = false  // Reset flag for new streaming session
+
+        // Build context for first turn only
+        let isFirstTurn = ephemeralConversation.turns.isEmpty
+        let contextForAI: String? = isFirstTurn ? context?.selectedText : nil
+
+        // Record user turn
+        ephemeralConversation.turns.append(ConversationTurn(
+            role: .user,
+            content: query,
+            contextIncluded: contextForAI != nil
+        ))
+
+        // Clear input, start streaming
+        inputText = ""
+        error = nil
+        ephemeralConversation.isStreaming = true
+        ephemeralConversation.currentResponse = ""
+
+        // Build prior messages for multi-turn context
+        // Drop the last turn (the one we just added) since that's the current query
+        let priorCells: [[String: Any]] = ephemeralConversation.turns.dropLast().map { turn in
+            [
+                "type": turn.role == .user ? "text" : "aiResponse",
+                "content": turn.content
+            ]
+        }
+
+        // Stream response via AIOrchestrator in a cancellable task
+        streamingTask = Task { [weak self] in
+            await orchestrator.route(
+                query: query,
+                streamId: nil,  // Ephemeral - not tied to real stream
+                priorCells: priorCells,
+                sourceContext: contextForAI,
+                onChunk: { [weak self] chunk in
+                    Task { @MainActor in
+                        guard let self = self, !self.isStreamingCancelled else { return }
+                        self.ephemeralConversation.currentResponse += chunk
+                    }
+                },
+                onComplete: { [weak self] in
+                    Task { @MainActor in
+                        guard let self = self, !self.isStreamingCancelled else { return }
+                        // Record assistant turn with completed response
+                        self.ephemeralConversation.turns.append(ConversationTurn(
+                            role: .assistant,
+                            content: self.ephemeralConversation.currentResponse,
+                            contextIncluded: false
+                        ))
+                        self.ephemeralConversation.isStreaming = false
+                        self.ephemeralConversation.currentResponse = ""
+                    }
+                },
+                onError: { [weak self] err in
+                    Task { @MainActor in
+                        guard let self = self, !self.isStreamingCancelled else { return }
+                        self.error = err.localizedDescription
+                        self.ephemeralConversation.isStreaming = false
+                    }
+                }
+            )
+        }
+    }
+
     /// Handle Escape key
     func handleEscape() {
+        // First priority: cancel streaming and clear ephemeral conversation if active
+        if ephemeralConversation.isActive {
+            cancelStreaming()
+            ephemeralConversation.clear()
+            return
+        }
+
+        // Second: clear input/context
         if !inputText.isEmpty || context?.hasContent == true {
-            // Clear input but stay open
             inputText = ""
             context = nil
-        } else {
-            hide()
+            return
         }
+
+        // Third: hide panel
+        hide()
     }
 
     /// Clear attached context
@@ -438,10 +580,14 @@ final class QuickPanelManager: ObservableObject {
     /// Called by SwiftUI when content height changes
     func contentHeightChanged(_ height: CGFloat) {
         let clampedHeight = max(QuickPanelWindow.minHeight, min(height, QuickPanelWindow.maxHeight))
+
+        // Skip if height hasn't meaningfully changed (reduces timer churn during streaming)
+        guard abs(targetHeight - clampedHeight) > 2 else { return }
         targetHeight = clampedHeight
 
         heightDebounceTimer?.invalidate()
-        heightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: false) { [weak self] _ in
+        // Longer debounce (150ms) to batch rapid content changes during streaming
+        heightDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.applyHeightUpdate()
             }
@@ -450,14 +596,24 @@ final class QuickPanelManager: ObservableObject {
 
     private func applyHeightUpdate() {
         guard let panel = panel else { return }
+
+        // Skip if already animating - the completion handler will check if another update is needed
         guard !isAnimatingHeight else { return }
 
         let currentHeight = panel.frame.height
-        guard abs(currentHeight - targetHeight) > 1 else { return }
+        // Require meaningful difference to animate (avoid micro-adjustments)
+        guard abs(currentHeight - targetHeight) > 4 else { return }
 
         isAnimatingHeight = true
         panel.resize(toHeight: targetHeight, animated: true) { [weak self] in
-            self?.isAnimatingHeight = false
+            guard let self = self else { return }
+            self.isAnimatingHeight = false
+
+            // Check if height changed during animation - if so, schedule another update
+            let finalHeight = self.panel?.frame.height ?? 0
+            if abs(finalHeight - self.targetHeight) > 4 {
+                self.applyHeightUpdate()
+            }
         }
     }
 }

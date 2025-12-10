@@ -77,6 +77,7 @@ final class AssetService {
     }
 
     /// Convert a ticker-asset:// URL to a data URL for API consumption
+    /// Images are resized to max 2048px (longest edge) to keep payloads reasonable while preserving text readability
     /// Returns nil if the file doesn't exist, can't be read, or is outside the assets directory
     func assetToDataURL(_ assetURL: String) -> String? {
         // Parse ticker-asset:// URL to get file path
@@ -114,11 +115,11 @@ final class AssetService {
             return nil
         }
 
-        // Detect MIME type
-        let mimeType = mimeType(for: safeURL.pathExtension)
+        // Resize image if needed and convert to JPEG for efficient encoding
+        let (finalData, mimeType) = resizeImageForAPI(data: data, maxDimension: 2048)
 
         // Convert to data URL
-        let base64 = data.base64EncodedString()
+        let base64 = finalData.base64EncodedString()
         return "data:\(mimeType);base64,\(base64)"
     }
 
@@ -128,6 +129,49 @@ final class AssetService {
     }
 
     // MARK: - Private Helpers
+
+    /// Resize image data if it exceeds maxDimension on longest edge
+    /// Returns (resized data, mime type) - uses JPEG for resized images to reduce size
+    private func resizeImageForAPI(data: Data, maxDimension: CGFloat) -> (Data, String) {
+        guard let image = NSImage(data: data) else {
+            // Not an image or corrupted - return original
+            return (data, "application/octet-stream")
+        }
+
+        let size = image.size
+        let longestEdge = max(size.width, size.height)
+
+        // If image is already small enough, return original with detected type
+        if longestEdge <= maxDimension {
+            let ext = imageExtension(from: data) ?? "png"
+            return (data, mimeType(for: ext))
+        }
+
+        // Calculate new size maintaining aspect ratio
+        let scale = maxDimension / longestEdge
+        let newSize = NSSize(width: size.width * scale, height: size.height * scale)
+
+        // Create resized image
+        let resizedImage = NSImage(size: newSize)
+        resizedImage.lockFocus()
+        NSGraphicsContext.current?.imageInterpolation = .high
+        image.draw(in: NSRect(origin: .zero, size: newSize),
+                   from: NSRect(origin: .zero, size: size),
+                   operation: .copy,
+                   fraction: 1.0)
+        resizedImage.unlockFocus()
+
+        // Convert to JPEG with 0.85 quality - good balance of size and quality for text
+        guard let tiffData = resizedImage.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let jpegData = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else {
+            // Fallback to original if conversion fails
+            let ext = imageExtension(from: data) ?? "png"
+            return (data, mimeType(for: ext))
+        }
+
+        return (jpegData, "image/jpeg")
+    }
 
     /// Get MIME type for file extension
     private func mimeType(for ext: String) -> String {
