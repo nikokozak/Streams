@@ -1,6 +1,6 @@
 import type { Cell } from '../types/models';
 
-/** Pattern for block references: @block-{shortId} or @block-{name} */
+/** Pattern for block references: @block-{shortId} (4-char hex prefix of cell UUID) */
 const REF_PATTERN = /@block-([a-zA-Z0-9]{3,})/gi;
 
 /**
@@ -91,11 +91,9 @@ export function getShortId(cellId: string): string {
 
 /**
  * Generate a reference string for a cell
+ * Always uses the 4-char shortId (never blockName) to ensure regex compatibility
  */
 export function generateReference(cell: Cell): string {
-  if (cell.blockName) {
-    return `@block-${cell.blockName}`;
-  }
   return `@block-${getShortId(cell.id)}`;
 }
 
@@ -103,7 +101,9 @@ export function generateReference(cell: Cell): string {
  * Check if content contains any block references
  */
 export function hasReferences(content: string): boolean {
-  return REF_PATTERN.test(content);
+  // Create new regex instance to avoid lastIndex issues with global flag
+  const pattern = /@block-([a-zA-Z0-9]{3,})/i;
+  return pattern.test(content);
 }
 
 /**

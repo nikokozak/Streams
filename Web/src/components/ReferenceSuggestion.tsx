@@ -133,7 +133,9 @@ export function createReferenceSuggestion(
           return {
             id: cell.id,
             label,
-            shortId: cell.blockName || getShortId(cell.id),
+            // Always use the 4-char shortId for the reference syntax (never blockName)
+            // This ensures the regex @block-([a-zA-Z0-9]{3,}) always matches correctly
+            shortId: getShortId(cell.id),
             type: cell.type,
           };
         });

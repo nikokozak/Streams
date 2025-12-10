@@ -137,7 +137,9 @@ export function CellEditor({
           class: 'cell-reference',
         },
         renderLabel({ node }) {
-          return `@block-${node.attrs.label ?? node.attrs.id}`;
+          // Always use shortId for the reference syntax to ensure regex compatibility
+          // node.attrs.shortId is the 4-char hex prefix, set by ReferenceSuggestion
+          return `@block-${node.attrs.shortId ?? node.attrs.id.substring(0, 4).toLowerCase()}`;
         },
         suggestion: suggestionConfig,
       }),

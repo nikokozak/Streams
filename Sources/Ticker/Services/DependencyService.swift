@@ -143,8 +143,8 @@ final class DependencyService {
 // MARK: - Reference Parsing
 
 extension DependencyService {
-    /// Pattern for block references: @block-{shortId} or @block-{name}
-    /// Examples: @block-abc1, @block-nasdaq
+    /// Pattern for block references: @block-{shortId} (4-char hex prefix of cell UUID)
+    /// Examples: @block-abc1, @block-f3e2
     static let referencePattern = try! NSRegularExpression(
         pattern: #"@block-([a-zA-Z0-9]{3,})"#,
         options: []
