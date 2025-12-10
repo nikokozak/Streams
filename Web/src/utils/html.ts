@@ -23,6 +23,19 @@ export function extractImages(html: string): string[] {
 }
 
 /**
+ * Extract image URLs (src attributes) from content
+ * @returns Array of image src URLs
+ */
+export function extractImageURLs(html: string): string[] {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const images = tmp.querySelectorAll('img');
+  return Array.from(images)
+    .map(img => img.getAttribute('src'))
+    .filter((src): src is string => src !== null && src.length > 0);
+}
+
+/**
  * Build HTML block containing images (for prepending to AI responses)
  */
 export function buildImageBlock(images: string[]): string {

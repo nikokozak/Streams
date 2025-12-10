@@ -878,6 +878,31 @@ body {
   outline-offset: 2px;
 }
 
+/* Gap cursor styling - shows cursor before/after block elements like images */
+.ProseMirror .ProseMirror-gapcursor {
+  display: block;
+  position: relative;
+  height: 0;
+  margin: var(--spacing-xs) 0;
+}
+
+.ProseMirror .ProseMirror-gapcursor::after {
+  content: '';
+  display: block;
+  position: absolute;
+  top: -2px;
+  width: 20px;
+  height: 1px;
+  background-color: var(--color-text);
+  animation: gapcursor-blink 1s step-end infinite;
+}
+
+@keyframes gapcursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
 /* Image block container (for preserved images in AI cells) */
 .cell-images-block {
   margin-bottom: var(--spacing-md);

@@ -22,7 +22,13 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
   }, [initialSources]);
 
   useEffect(() => {
+    console.log('[useBridgeMessages] Setting up message handler for streamId:', streamId);
+
     const unsubscribe = bridge.onMessage((message) => {
+      try {
+      // Debug: log all messages to see what's coming through
+      console.log('[useBridgeMessages] Received:', message.type);
+
       // Source updates
       if (message.type === 'sourceAdded' && message.payload?.source) {
         const source = message.payload.source as SourceReference;
@@ -36,6 +42,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
 
       // Request for current stream ID (for native file drops)
       if (message.type === 'requestCurrentStreamId') {
+        console.log('[Bridge] requestCurrentStreamId, responding with:', streamId);
         bridge.send({
           type: 'currentStreamId',
           payload: { streamId }
@@ -43,10 +50,34 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
       }
 
       // Image dropped via native drag-and-drop
-      if (message.type === 'imageDropped' && message.payload?.fullPath) {
-        const fullPath = message.payload.fullPath as string;
-        const imageUrl = `file://${fullPath}`;
-        store.insertImageInFocusedBlock(imageUrl);
+      if (message.type === 'imageDropped') {
+        console.log('[useBridgeMessages] imageDropped payload:', JSON.stringify(message.payload));
+        if (message.payload?.assetUrl) {
+          const assetUrl = message.payload.assetUrl as string;
+          const { focusedBlockId, blockOrder } = store;
+          console.log('[useBridgeMessages] Inserting image:', assetUrl, 'focusedBlock:', focusedBlockId);
+
+          store.insertImageInFocusedBlock(assetUrl);
+
+          // Save the updated block to persist the image reference
+          // insertImageInFocusedBlock uses focusedBlockId or falls back to last block
+          const targetBlockId = focusedBlockId || blockOrder[blockOrder.length - 1];
+          const block = store.getBlock(targetBlockId);
+          if (block) {
+            bridge.send({
+              type: 'saveCell',
+              payload: {
+                id: block.id,
+                streamId,
+                content: block.content,
+                type: block.type,
+                order: block.order,
+              },
+            });
+          }
+        } else {
+          console.warn('[useBridgeMessages] imageDropped but no assetUrl in payload');
+        }
       }
 
       // AI streaming updates
@@ -257,8 +288,15 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         store.setError(cellId, error);
         store.completeRefreshing(cellId);
       }
+      } catch (err) {
+        console.error('[useBridgeMessages] Error handling message:', message.type, err);
+      }
     });
-    return unsubscribe;
+
+    return () => {
+      console.log('[useBridgeMessages] Cleaning up message handler for streamId:', streamId);
+      unsubscribe();
+    };
   }, [streamId, store]);
 
   return {

@@ -89,8 +89,9 @@ export function CellEditor({
           if (message.type === 'imageSaved' && message.payload?.requestId === requestId) {
             clearTimeout(timeout);
             unsubscribe();
-            const fullPath = message.payload.fullPath as string;
-            resolve(`file://${fullPath}`);
+            // Use custom URL scheme that WKWebView can access
+            const assetUrl = message.payload.assetUrl as string;
+            resolve(assetUrl);
           } else if (message.type === 'imageSaveError' && message.payload?.requestId === requestId) {
             clearTimeout(timeout);
             unsubscribe();
@@ -141,6 +142,27 @@ export function CellEditor({
         allowBase64: false,
         HTMLAttributes: {
           class: 'cell-image',
+          draggable: 'false',
+        },
+      }).extend({
+        // Allow gap cursor before/after images
+        addKeyboardShortcuts() {
+          return {
+            // Enter after image creates new paragraph
+            Enter: ({ editor }) => {
+              const { state } = editor;
+              const { selection } = state;
+              const { $from } = selection;
+
+              // Check if we're right after an image
+              const nodeBefore = $from.nodeBefore;
+              if (nodeBefore?.type.name === 'image') {
+                // Insert a paragraph after the image
+                return editor.chain().insertContentAt($from.pos, { type: 'paragraph' }).focus().run();
+              }
+              return false;
+            },
+          };
         },
       }),
     ],
@@ -310,6 +332,24 @@ export function CellEditor({
       hasFocused.current = false;
     }
   }, [autoFocus, editor]);
+
+  // Handle pending image insertion from store (e.g., from native drag-and-drop)
+  const pendingImage = useBlockStore((state) => state.pendingImage);
+  const clearPendingImage = useBlockStore((state) => state.clearPendingImage);
+
+  useEffect(() => {
+    if (pendingImage && pendingImage.cellId === cellId && editor) {
+      console.log('[CellEditor] Processing pending image:', pendingImage.url);
+      
+      const node = editor.schema.nodes.image.create({ src: pendingImage.url });
+      
+      // Insert at current selection
+      const transaction = editor.state.tr.replaceSelectionWith(node);
+      editor.view.dispatch(transaction);
+      
+      clearPendingImage();
+    }
+  }, [pendingImage, cellId, editor, clearPendingImage]);
 
   return (
     <div className="cell-editor">

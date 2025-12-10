@@ -44,6 +44,7 @@ final class PerplexityService: LLMProvider {
 
         // Perplexity requires alternating user/assistant messages
         // Merge consecutive messages of the same role
+        // Note: Perplexity doesn't support images, so we only use text content
         for msg in request.messages {
             if let last = messages.last,
                last["role"] == msg.role,
@@ -142,7 +143,7 @@ final class PerplexityService: LLMProvider {
     ) async {
         let request = LLMRequest(
             systemPrompt: Prompts.search,
-            messages: [(role: "user", content: query)],
+            textMessages: [(role: "user", content: query)],
             temperature: 0.2,
             maxTokens: 1024
         )

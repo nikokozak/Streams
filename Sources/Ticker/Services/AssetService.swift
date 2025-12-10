@@ -76,7 +76,57 @@ final class AssetService {
         }
     }
 
+    /// Convert a ticker-asset:// URL to a data URL for API consumption
+    /// Returns nil if the file doesn't exist, can't be read, or is outside the assets directory
+    func assetToDataURL(_ assetURL: String) -> String? {
+        // Parse ticker-asset:// URL to get file path
+        guard assetURL.hasPrefix("ticker-asset://") else { return nil }
+
+        let filePath = String(assetURL.dropFirst("ticker-asset://".count))
+        let requestedURL = URL(fileURLWithPath: filePath)
+
+        // Security: Canonicalize paths to prevent directory traversal attacks
+        let canonicalPath = requestedURL.standardized.resolvingSymlinksInPath().path
+        let canonicalBase = assetsBaseDirectory.standardized.resolvingSymlinksInPath().path
+
+        // Verify the requested path is within the assets directory
+        guard canonicalPath.hasPrefix(canonicalBase + "/") else {
+            print("AssetService: Blocked path outside assets directory: \(filePath)")
+            return nil
+        }
+
+        let safeURL = URL(fileURLWithPath: canonicalPath)
+        guard let data = try? Data(contentsOf: safeURL) else {
+            print("AssetService: Could not read file at \(canonicalPath)")
+            return nil
+        }
+
+        // Detect MIME type
+        let mimeType = mimeType(for: safeURL.pathExtension)
+
+        // Convert to data URL
+        let base64 = data.base64EncodedString()
+        return "data:\(mimeType);base64,\(base64)"
+    }
+
+    /// Convert multiple asset URLs to data URLs
+    func assetsToDataURLs(_ assetURLs: [String]) -> [String] {
+        assetURLs.compactMap { assetToDataURL($0) }
+    }
+
     // MARK: - Private Helpers
+
+    /// Get MIME type for file extension
+    private func mimeType(for ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "heic", "heif": return "image/heic"
+        default: return "application/octet-stream"
+        }
+    }
 
     /// Detect image format from data header bytes
     private func imageExtension(from data: Data) -> String? {

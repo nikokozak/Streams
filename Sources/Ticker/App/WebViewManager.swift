@@ -31,6 +31,10 @@ final class WebViewManager: NSObject {
         self.bridgeService = BridgeService()
         config.userContentController.add(bridgeService, name: "bridge")
 
+        // Register custom URL scheme handler for local assets
+        let schemeHandler = AssetSchemeHandler()
+        config.setURLSchemeHandler(schemeHandler, forURLScheme: "ticker-asset")
+
         self.webView = DroppableWebView(frame: .zero, configuration: config)
 
         // Initialize services
@@ -97,6 +101,8 @@ final class WebViewManager: NSObject {
 
     /// Handle files dropped via native macOS drag-and-drop
     private func handleDroppedFiles(_ urls: [URL]) {
+        print("handleDroppedFiles: \(urls.map { $0.lastPathComponent })")
+
         // Get current stream ID from frontend
         bridgeService.send(BridgeMessage(
             type: "requestCurrentStreamId",
@@ -111,11 +117,14 @@ final class WebViewManager: NSObject {
 
     /// Called by frontend with the current stream ID
     private func processDroppedFiles(streamId: UUID) {
+        print("processDroppedFiles: streamId=\(streamId), files=\(pendingDroppedFiles.count)")
         for url in pendingDroppedFiles {
             // Check if this is an image file
             if isImageFile(url) {
+                print("Processing as image: \(url.lastPathComponent)")
                 processDroppedImage(url, streamId: streamId)
             } else {
+                print("Processing as document: \(url.lastPathComponent)")
                 processDroppedDocument(url, streamId: streamId)
             }
         }
@@ -133,15 +142,22 @@ final class WebViewManager: NSObject {
     private func processDroppedImage(_ url: URL, streamId: UUID) {
         do {
             let imageData = try Data(contentsOf: url)
+            print("Read image data: \(imageData.count) bytes")
             let relativePath = try assetService.saveImage(data: imageData, streamId: streamId, filename: url.lastPathComponent)
             let fullPath = assetService.assetURL(for: relativePath).path
+            print("Saved image to: \(fullPath)")
+
+            // Use custom URL scheme that WKWebView can access
+            let assetUrl = "ticker-asset://\(fullPath)"
 
             // Send to frontend to insert into focused cell
             bridgeService.send(BridgeMessage(type: "imageDropped", payload: [
                 "relativePath": AnyCodable(relativePath),
                 "fullPath": AnyCodable(fullPath),
+                "assetUrl": AnyCodable(assetUrl),
                 "streamId": AnyCodable(streamId.uuidString)
             ]))
+            print("Sent imageDropped message with assetUrl: \(assetUrl)")
         } catch {
             print("Failed to save dropped image \(url.lastPathComponent): \(error)")
             bridgeService.send(BridgeMessage(type: "imageDropError", payload: [
@@ -589,6 +605,13 @@ final class WebViewManager: NSObject {
                 return
             }
 
+            // Parse image URLs for current cell (convert ticker-asset:// to data URLs)
+            let currentCellImageURLs = payload["imageURLs"]?.value as? [String] ?? []
+            let currentCellDataURLs = assetService.assetsToDataURLs(currentCellImageURLs)
+            if !currentCellDataURLs.isEmpty {
+                print("Think: Converting \(currentCellImageURLs.count) images to data URLs")
+            }
+
             // Parse streamId for RAG retrieval and reference resolution
             var streamIdForRAG: UUID? = nil
             var sourceContext: String? = nil
@@ -614,17 +637,21 @@ final class WebViewManager: NSObject {
             // Resolve @block-xxx references in the current cell content
             let resolvedCurrentCell = DependencyService.resolveReferencesInContent(currentCell, cells: streamCells)
 
-            // Parse prior cells and resolve their references too
-            var priorCells: [[String: String]] = []
+            // Parse prior cells and resolve their references too (including images)
+            var priorCells: [[String: Any]] = []
             if let priorCellsRaw = payload["priorCells"]?.value as? [[String: Any]] {
                 for cell in priorCellsRaw {
-                    var cellDict: [String: String] = [:]
+                    var cellDict: [String: Any] = [:]
                     if let content = cell["content"] as? String {
                         // Resolve references in prior cell content
                         cellDict["content"] = DependencyService.resolveReferencesInContent(content, cells: streamCells)
                     }
                     if let type = cell["type"] as? String {
                         cellDict["type"] = type
+                    }
+                    // Convert prior cell images to data URLs
+                    if let imageURLs = cell["imageURLs"] as? [String], !imageURLs.isEmpty {
+                        cellDict["imageURLs"] = assetService.assetsToDataURLs(imageURLs)
                     }
                     priorCells.append(cellDict)
                 }
@@ -663,6 +690,7 @@ final class WebViewManager: NSObject {
             Task { [weak self] in
                 await orchestrator.route(
                     query: resolvedCurrentCell,
+                    queryImages: currentCellDataURLs,
                     streamId: streamIdForRAG,
                     priorCells: priorCells,
                     sourceContext: sourceContext,
@@ -862,10 +890,12 @@ final class WebViewManager: NSObject {
             do {
                 let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
                 let fullPath = assetService.assetURL(for: relativePath).path
+                let assetUrl = "ticker-asset://\(fullPath)"
 
                 bridgeService.send(BridgeMessage(type: "imageSaved", payload: [
                     "relativePath": AnyCodable(relativePath),
                     "fullPath": AnyCodable(fullPath),
+                    "assetUrl": AnyCodable(assetUrl),
                     "requestId": AnyCodable(requestId as Any)
                 ]))
             } catch {

@@ -4,13 +4,14 @@ import Foundation
 final class AIService: LLMProvider {
     private let settings: SettingsService
     private let baseURL = "https://api.openai.com/v1/chat/completions"
-    private let model = "gpt-4o-mini"
+    private let textModel = "gpt-4o-mini"
+    private let visionModel = "gpt-4o"  // Use full gpt-4o for vision (better quality)
 
     // MARK: - LLMProvider
 
     let id = "openai"
     let name = "OpenAI"
-    var modelId: String { model }
+    var modelId: String { textModel }
 
     init(settings: SettingsService = .shared) {
         self.settings = settings
@@ -38,15 +39,35 @@ final class AIService: LLMProvider {
             return
         }
 
-        var messages: [[String: String]] = [
+        // Use vision model if request contains images
+        let modelToUse = request.hasImages ? visionModel : textModel
+
+        // Build messages array with multimodal support
+        var messages: [[String: Any]] = [
             ["role": "system", "content": request.systemPrompt]
         ]
+
         for msg in request.messages {
-            messages.append(["role": msg.role, "content": msg.content])
+            if msg.hasImages {
+                // Multimodal message with images
+                var content: [[String: Any]] = [
+                    ["type": "text", "text": msg.content]
+                ]
+                for imageURL in msg.imageURLs {
+                    content.append([
+                        "type": "image_url",
+                        "image_url": ["url": imageURL, "detail": "auto"]
+                    ])
+                }
+                messages.append(["role": msg.role, "content": content])
+            } else {
+                // Text-only message
+                messages.append(["role": msg.role, "content": msg.content])
+            }
         }
 
         var requestBody: [String: Any] = [
-            "model": model,
+            "model": modelToUse,
             "messages": messages,
             "stream": true,
             "temperature": request.temperature
@@ -91,7 +112,7 @@ final class AIService: LLMProvider {
         ]
 
         let requestBody: [String: Any] = [
-            "model": model,
+            "model": textModel,
             "messages": messages,
             "max_tokens": 50,
             "temperature": 0.3
@@ -146,7 +167,7 @@ final class AIService: LLMProvider {
         ]
 
         let requestBody: [String: Any] = [
-            "model": model,
+            "model": textModel,
             "messages": messages,
             "max_tokens": 20,
             "temperature": 0.3
@@ -200,7 +221,7 @@ final class AIService: LLMProvider {
         ]
 
         let requestBody: [String: Any] = [
-            "model": model,
+            "model": textModel,
             "messages": messages,
             "stream": true,
             "max_tokens": 2048
@@ -224,71 +245,6 @@ final class AIService: LLMProvider {
         task.resume()
     }
 
-    // MARK: - Think
-
-    /// Think with AI using full session context
-    func think(
-        currentCell: String,
-        priorCells: [[String: String]],
-        sourceContext: String?,
-        onChunk: @escaping (String) -> Void,
-        onComplete: @escaping () -> Void,
-        onError: @escaping (Error) -> Void
-    ) {
-        guard let apiKey else {
-            onError(AIError.notConfigured)
-            return
-        }
-
-        // Build messages
-        var messages: [[String: String]] = [
-            ["role": "system", "content": Prompts.thinkingPartner]
-        ]
-
-        // Add source context if available
-        if let context = sourceContext, !context.isEmpty {
-            messages.append([
-                "role": "system",
-                "content": "Reference documents:\n\n\(context)"
-            ])
-        }
-
-        // Add prior cells as conversation history
-        for cell in priorCells.dropLast() {
-            let role = cell["type"] == "aiResponse" ? "assistant" : "user"
-            if let content = cell["content"], !content.isEmpty {
-                messages.append(["role": role, "content": content])
-            }
-        }
-
-        // Add current cell as the latest user message
-        messages.append(["role": "user", "content": currentCell])
-
-        // Build request
-        let requestBody: [String: Any] = [
-            "model": model,
-            "messages": messages,
-            "stream": true,
-            "max_tokens": 2048
-        ]
-
-        guard let url = URL(string: baseURL),
-              let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
-            onError(AIError.invalidRequest)
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = bodyData
-
-        let delegate = StreamingDelegate(onChunk: onChunk, onComplete: onComplete, onError: onError)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: .main)
-        let task = session.dataTask(with: request)
-        task.resume()
-    }
 }
 
 // MARK: - Streaming Delegate

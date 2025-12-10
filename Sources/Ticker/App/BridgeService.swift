@@ -89,16 +89,29 @@ final class BridgeService: NSObject, WKScriptMessageHandler {
 
     /// Send a message to JavaScript
     func send(_ message: BridgeMessage) {
-        guard let webView else { return }
+        guard let webView else {
+            print("Bridge send: No webView available for message: \(message.type)")
+            return
+        }
 
         do {
             let data = try JSONEncoder().encode(message)
-            guard let json = String(data: data, encoding: .utf8) else { return }
+            guard let json = String(data: data, encoding: .utf8) else {
+                print("Bridge send: Failed to encode JSON for message: \(message.type)")
+                return
+            }
+
+            // Debug: log what we're sending for image-related messages
+            if message.type.contains("image") || message.type.contains("Image") {
+                print("Bridge send: Sending \(message.type) with JSON length \(json.count)")
+            }
 
             let script = "window.bridge?.receive(\(json))"
-            webView.evaluateJavaScript(script) { _, error in
+            webView.evaluateJavaScript(script) { result, error in
                 if let error {
-                    print("Bridge send error: \(error)")
+                    print("Bridge send error for \(message.type): \(error)")
+                } else if message.type.contains("image") || message.type.contains("Image") {
+                    print("Bridge send: Successfully sent \(message.type), result: \(String(describing: result))")
                 }
             }
         } catch {

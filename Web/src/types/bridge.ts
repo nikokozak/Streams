@@ -56,6 +56,9 @@ export const bridge: Bridge = {
 
   /** Called by Swift to deliver messages */
   receive(message: BridgeMessage): void {
+    // Debug: log all incoming messages
+    console.log('[Bridge.receive]', message.type, message.payload ? Object.keys(message.payload) : 'no payload');
+
     // Handle callback responses
     if (message.type === 'callback' && message.callbackId) {
       const callback = callbacks.get(message.callbackId);
@@ -66,6 +69,7 @@ export const bridge: Bridge = {
     }
 
     // Dispatch to message handlers
+    console.log('[Bridge.receive] Dispatching to', messageHandlers.size, 'handlers');
     messageHandlers.forEach((handler) => handler(message));
   },
 
@@ -91,3 +95,4 @@ declare global {
 }
 
 window.bridge = bridge;
+console.log('[Bridge] window.bridge initialized');

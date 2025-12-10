@@ -5,7 +5,7 @@ import { BlockWrapper } from './BlockWrapper';
 import { SourcePanel } from './SourcePanel';
 import { ReferencePreview } from './ReferencePreview';
 import { CellOverlay } from './CellOverlay';
-import { stripHtml, extractImages, buildImageBlock, isEmptyCell } from '../utils/html';
+import { stripHtml, extractImages, extractImageURLs, buildImageBlock, isEmptyCell } from '../utils/html';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 import { useBlockFocus } from '../hooks/useBlockFocus';
@@ -185,11 +185,15 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     const cells = store.getBlocksArray();
     const cellIndex = cells.findIndex(c => c.id === cellId);
 
-    // Extract images from the cell content - these will be preserved
+    // Extract images from the cell content - these will be preserved visually
     const images = extractImages(cellContent);
     const imageBlock = buildImageBlock(images);
 
+    // Extract image URLs for sending to the AI (will be converted to data URLs on Swift side)
+    const currentCellImageURLs = extractImageURLs(cellContent);
+
     // Gather prior cells for context (exclude current cell and empty spacing cells)
+    // Include image URLs for vision model support
     const priorCells = cells
       .slice(0, cellIndex)
       .filter(c => !isEmptyCell(c.content))
@@ -197,6 +201,7 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
         id: c.id,
         content: c.content,
         type: c.type,
+        imageURLs: extractImageURLs(c.content),
       }));
 
     // Update cell state
@@ -222,16 +227,18 @@ export function StreamEditor({ stream, onBack, onDelete }: StreamEditorProps) {
     store.startStreaming(cellId, imageBlock);
     store.clearError(cellId);
 
-    // Send think request with full context
+    // Send think request with full context (including image URLs for vision)
     bridge.send({
       type: 'think',
       payload: {
         cellId,
         streamId: stream.id,
         currentCell: prompt,
+        imageURLs: currentCellImageURLs,  // Images in current cell
         priorCells: priorCells.map(c => ({
-          ...c,
           content: stripHtml(c.content),
+          type: c.type,
+          imageURLs: c.imageURLs,  // Images in prior cells
         })),
       },
     });
