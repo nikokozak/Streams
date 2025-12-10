@@ -103,16 +103,39 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let button = statusItem?.button {
             button.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "Ticker")
             button.image?.isTemplate = true  // Adapts to menu bar appearance
+            button.action = #selector(statusItemClicked)
+            button.target = self
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        guard let event = NSApp.currentEvent else {
+            toggleMainWindow()
+            return
         }
 
-        let menu = NSMenu()
-        menu.addItem(withTitle: "Show Ticker", action: #selector(showMainWindow), keyEquivalent: "")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "Quick Capture", action: #selector(toggleQuickPanel), keyEquivalent: "l")
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(withTitle: "Quit Ticker", action: #selector(quitApp), keyEquivalent: "q")
+        if event.type == .rightMouseUp {
+            // Right-click shows menu
+            let menu = NSMenu()
+            menu.addItem(withTitle: "Quick Capture", action: #selector(toggleQuickPanel), keyEquivalent: "l")
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(withTitle: "Quit Ticker", action: #selector(quitApp), keyEquivalent: "q")
+            statusItem?.menu = menu
+            statusItem?.button?.performClick(nil)
+            statusItem?.menu = nil  // Clear so left-click works next time
+        } else {
+            // Left-click toggles window
+            toggleMainWindow()
+        }
+    }
 
-        statusItem?.menu = menu
+    private func toggleMainWindow() {
+        if mainWindow?.isVisible == true {
+            mainWindow?.orderOut(nil)
+        } else {
+            showMainWindow()
+        }
     }
 
     @objc private func showMainWindow() {
@@ -131,7 +154,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func setupMainWindow() {
-        let windowRect = NSRect(x: 0, y: 0, width: 900, height: 700)
+        // Position window to cover right 3/8 of screen
+        let screen = NSScreen.main ?? NSScreen.screens.first!
+        let screenFrame = screen.visibleFrame
+        let windowWidth = screenFrame.width * 3 / 8
+        let windowRect = NSRect(
+            x: screenFrame.maxX - windowWidth,
+            y: screenFrame.minY,
+            width: windowWidth,
+            height: screenFrame.height
+        )
 
         mainWindow = NSWindow(
             contentRect: windowRect,
@@ -141,10 +173,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
 
         mainWindow?.title = "Ticker"
-        mainWindow?.center()
-        mainWindow?.minSize = NSSize(width: 600, height: 400)
+        mainWindow?.minSize = NSSize(width: 300, height: 400)
         mainWindow?.appearance = NSAppearance(named: .aqua)  // Force light mode
         mainWindow?.delegate = self  // Handle close to hide instead of quit
+        mainWindow?.level = .floating  // Always on top
+        mainWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
         webViewManager = WebViewManager()
         mainWindow?.contentView = webViewManager?.webView
