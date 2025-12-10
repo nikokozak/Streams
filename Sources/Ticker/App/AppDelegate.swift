@@ -14,15 +14,19 @@ struct TickerApp {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var mainWindow: NSWindow?
     private var webViewManager: WebViewManager?
+
+    // Menu bar (status item)
+    private var statusItem: NSStatusItem?
 
     // Quick Panel services
     private var hotkeyService: HotkeyService?
     private var quickPanelManager: QuickPanelManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        setupStatusItem()
         setupMenuBar()
         setupMainWindow()
         setupQuickPanel()
@@ -70,8 +74,60 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Cleanup
     }
 
+    /// Don't quit when window is closed - hide to menu bar instead
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        false
+    }
+
+    /// Re-show window when clicking dock icon
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            showMainWindow()
+        }
+        return true
+    }
+
+    // MARK: - NSWindowDelegate
+
+    /// Hide window instead of closing when user clicks close button
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false  // Don't actually close, just hide
+    }
+
+    // MARK: - Status Item (Menu Bar)
+
+    private func setupStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+
+        if let button = statusItem?.button {
+            button.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: "Ticker")
+            button.image?.isTemplate = true  // Adapts to menu bar appearance
+        }
+
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Show Ticker", action: #selector(showMainWindow), keyEquivalent: "")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Quick Capture", action: #selector(toggleQuickPanel), keyEquivalent: "l")
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(withTitle: "Quit Ticker", action: #selector(quitApp), keyEquivalent: "q")
+
+        statusItem?.menu = menu
+    }
+
+    @objc private func showMainWindow() {
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func toggleQuickPanel() {
+        Task { @MainActor in
+            quickPanelManager?.toggle()
+        }
+    }
+
+    @objc private func quitApp() {
+        NSApp.terminate(nil)
     }
 
     private func setupMainWindow() {
@@ -88,6 +144,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         mainWindow?.center()
         mainWindow?.minSize = NSSize(width: 600, height: 400)
         mainWindow?.appearance = NSAppearance(named: .aqua)  // Force light mode
+        mainWindow?.delegate = self  // Handle close to hide instead of quit
 
         webViewManager = WebViewManager()
         mainWindow?.contentView = webViewManager?.webView
