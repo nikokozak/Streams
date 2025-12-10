@@ -130,6 +130,8 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
                 content: block.content,
                 type: block.type,
                 order: block.order,
+                sourceApp: block.sourceApp,
+                references: block.references,
               },
             });
           }
@@ -159,7 +161,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         if (cell) {
           store.updateBlock(cellId, { content: finalContent });
 
-          // Save to Swift (include modelId if set)
+          // Save to Swift (include modelId if set, preserve sourceApp and references)
           bridge.send({
             type: 'saveCell',
             payload: {
@@ -170,6 +172,8 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
               order: cell.order,
               originalPrompt: cell.originalPrompt,
               modelId: cell.modelId,
+              sourceApp: cell.sourceApp,
+              references: cell.references,
             },
           });
         }
@@ -271,7 +275,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
           activeVersionId: newVersionId,
         });
 
-        // Save to Swift
+        // Save to Swift (preserve sourceApp and references)
         bridge.send({
           type: 'saveCell',
           payload: {
@@ -283,6 +287,8 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
             modifiers: cell.modifiers,
             versions: updatedVersions,
             activeVersionId: newVersionId,
+            sourceApp: cell.sourceApp,
+            references: cell.references,
           },
         });
 
@@ -319,7 +325,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         if (cell) {
           store.updateBlock(cellId, { content: htmlContent });
 
-          // Save refreshed content to Swift
+          // Save refreshed content to Swift (preserve sourceApp)
           bridge.send({
             type: 'saveCell',
             payload: {
@@ -332,6 +338,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
               processingConfig: cell.processingConfig,
               references: cell.references,
               blockName: cell.blockName,
+              sourceApp: cell.sourceApp,
             },
           });
         }

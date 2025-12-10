@@ -185,8 +185,8 @@ final class QuickPanelManager: ObservableObject {
         error = nil
 
         do {
-            // Get target stream
-            let streamId = try getTargetStreamId()
+            // Get target stream (may create new one)
+            let (streamId, isNewStream) = try getTargetStreamId()
 
             var cellsToAdd: [Cell] = []
             var contextCellId: UUID?
@@ -217,7 +217,7 @@ final class QuickPanelManager: ObservableObject {
                     try persistence.saveCell(aiCell)
 
                     // Notify frontend to trigger AI on this cell
-                    notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: aiCell.id)
+                    notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: aiCell.id, isNewStream: isNewStream)
                 } else {
                     // Create plain text cell
                     let textCell = Cell(
@@ -229,11 +229,11 @@ final class QuickPanelManager: ObservableObject {
                     cellsToAdd.append(textCell)
                     try persistence.saveCell(textCell)
 
-                    notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: nil)
+                    notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: nil, isNewStream: isNewStream)
                 }
             } else {
                 // Context only - just notify
-                notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: nil)
+                notifyFrontend(streamId: streamId, cells: cellsToAdd, triggerAI: nil, isNewStream: isNewStream)
             }
 
             // Success - hide panel
@@ -248,43 +248,22 @@ final class QuickPanelManager: ObservableObject {
     }
 
     /// Get the target stream ID (most recently modified, or create new)
-    private func getTargetStreamId() throws -> UUID {
+    /// Returns (streamId, isNewStream) tuple
+    private func getTargetStreamId() throws -> (UUID, Bool) {
         guard let persistence = persistence else {
             throw QuickPanelError.persistenceNotConfigured
         }
 
         // Get most recently modified stream
         if let recentStreamId = try persistence.getRecentlyModifiedStreamId() {
-            return recentStreamId
+            return (recentStreamId, false)
         }
 
         // No streams exist - create a new one
         let newStream = Stream(title: "Untitled")
         try persistence.saveStream(newStream)
 
-        // Notify frontend about the new stream
-        notifyStreamCreated(newStream)
-
-        return newStream.id
-    }
-
-    /// Notify frontend that a new stream was created
-    private func notifyStreamCreated(_ stream: Stream) {
-        guard let bridgeService = bridgeService else { return }
-
-        let formatter = ISO8601DateFormatter()
-        let payload: [String: AnyCodable] = [
-            "stream": AnyCodable([
-                "id": stream.id.uuidString,
-                "title": stream.title,
-                "sources": [] as [[String: Any]],
-                "cells": [] as [[String: Any]],
-                "createdAt": formatter.string(from: stream.createdAt),
-                "updatedAt": formatter.string(from: stream.updatedAt)
-            ] as [String: Any])
-        ]
-
-        bridgeService.send(BridgeMessage(type: "streamCreated", payload: payload))
+        return (newStream.id, true)
     }
 
     /// Create a quote cell from captured context
@@ -303,7 +282,9 @@ final class QuickPanelManager: ObservableObject {
             // Save image via AssetService and embed as img tag
             do {
                 let relativePath = try assetService.saveImage(data: imageData, streamId: streamId)
-                let assetUrl = "ticker-asset://\(relativePath)"
+                // Use absolute path for ticker-asset:// scheme handler
+                let absolutePath = assetService.assetURL(for: relativePath).path
+                let assetUrl = "ticker-asset://\(absolutePath)"
                 content = "<p><img src=\"\(assetUrl)\" alt=\"Screenshot\" style=\"max-width: 100%;\"></p>"
 
                 if let app = ctx.activeApp {
@@ -325,12 +306,14 @@ final class QuickPanelManager: ObservableObject {
     }
 
     /// Notify the React frontend about new cells
-    private func notifyFrontend(streamId: UUID, cells: [Cell], triggerAI: UUID?) {
+    /// When isNewStream is true, includes stream metadata so frontend can add it without creating a blank cell
+    private func notifyFrontend(streamId: UUID, cells: [Cell], triggerAI: UUID?, isNewStream: Bool = false) {
         guard let bridgeService = bridgeService else { return }
 
         var payload: [String: AnyCodable] = [
             "streamId": AnyCodable(streamId.uuidString),
-            "cells": AnyCodable(cells.map { cellToDict($0) })
+            "cells": AnyCodable(cells.map { cellToDict($0) }),
+            "isNewStream": AnyCodable(isNewStream)
         ]
 
         if let aiCellId = triggerAI {

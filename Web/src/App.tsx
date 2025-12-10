@@ -45,6 +45,15 @@ export function App() {
             }, ...prev]);
           }
           break;
+        case 'quickPanelCellsAdded':
+          // Quick Panel added cells - if it's a new stream, load it
+          if (message.payload?.isNewStream && message.payload?.streamId) {
+            const streamId = message.payload.streamId as string;
+            console.log('[App] Quick Panel created new stream with cells:', streamId);
+            // Load the stream from DB - cells are already saved
+            bridge.send({ type: 'loadStream', payload: { id: streamId } });
+          }
+          break;
       }
     });
 

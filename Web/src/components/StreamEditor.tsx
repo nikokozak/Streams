@@ -211,6 +211,8 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
           modifiers: cell.modifiers,
           versions: cell.versions,
           activeVersionId: cell.activeVersionId,
+          sourceApp: cell.sourceApp,
+          references: cell.references,
         },
       });
     }
@@ -407,7 +409,7 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
       activeVersionId: versionId,
     });
 
-    // Save to Swift
+    // Save to Swift (preserve sourceApp and references)
     bridge.send({
       type: 'saveCell',
       payload: {
@@ -419,6 +421,8 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
         modifiers: cell.modifiers,
         versions: cell.versions,
         activeVersionId: versionId,
+        sourceApp: cell.sourceApp,
+        references: cell.references,
       },
     });
   }, [stream.id, store]);
@@ -436,7 +440,7 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
     // Update local state
     store.updateBlock(cellId, { processingConfig: newConfig });
 
-    // Persist to backend
+    // Persist to backend (preserve sourceApp and references)
     bridge.send({
       type: 'saveCell',
       payload: {
@@ -446,6 +450,8 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
         type: cell.type,
         order: cell.order,
         processingConfig: newConfig,
+        sourceApp: cell.sourceApp,
+        references: cell.references,
       },
     });
   }, [stream.id, store]);
