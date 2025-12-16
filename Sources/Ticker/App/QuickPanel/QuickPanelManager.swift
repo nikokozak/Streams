@@ -47,6 +47,10 @@ final class QuickPanelManager: ObservableObject {
     @Published var statusMessage: String?  // Temporary feedback (success/info messages)
     @Published var ephemeralConversation = EphemeralConversation()
 
+    // Stream selection
+    @Published private(set) var availableStreams: [StreamSummary] = []
+    @Published var selectedStreamId: UUID?
+
     // MARK: - Services
 
     private let cursorService: CursorPositionService
@@ -71,6 +75,7 @@ final class QuickPanelManager: ObservableObject {
 
     private var panel: QuickPanelWindow?
     private var hostingView: NSHostingView<QuickPanelView>?
+    private var currentAppearance: NSAppearance?  // Stored to apply when panel is created
 
     // MARK: - Initialization
 
@@ -159,6 +164,9 @@ final class QuickPanelManager: ObservableObject {
         self.context = capturedContext
         resetState()
 
+        // Load available streams for picker
+        loadAvailableStreams()
+
         // Show accessibility warning if permission not granted and no context captured
         if !cursorService.hasAccessibilityPermission {
             if !capturedContext.hasContent {
@@ -214,6 +222,12 @@ final class QuickPanelManager: ObservableObject {
         inputText = ""
         isLoading = false
         error = nil
+    }
+
+    /// Update panel appearance (light/dark mode)
+    func updateAppearance(_ appearance: NSAppearance?) {
+        currentAppearance = appearance
+        panel?.appearance = appearance
     }
 
     // MARK: - Input Handling
@@ -419,14 +433,53 @@ final class QuickPanelManager: ObservableObject {
         isLoading = false
     }
 
-    /// Get the target stream ID (most recently modified, or create new)
+    /// Load available streams for the picker
+    func loadAvailableStreams() {
+        guard let persistence = persistence else { return }
+        do {
+            availableStreams = try persistence.loadStreamSummaries()
+            // Pre-select most recent if none selected
+            if selectedStreamId == nil, let first = availableStreams.first {
+                selectedStreamId = first.id
+            }
+        } catch {
+            print("[QuickPanel] Failed to load streams: \(error)")
+        }
+    }
+
+    /// Create a new stream and select it
+    func createAndSelectNewStream() {
+        guard let persistence = persistence else { return }
+        do {
+            let newStream = Stream(title: "Untitled")
+            try persistence.saveStream(newStream)
+            selectedStreamId = newStream.id
+            // Reload to include the new stream
+            loadAvailableStreams()
+
+            // Notify React frontend to reload its stream list
+            bridgeService?.send(BridgeMessage(
+                type: "streamsChanged",
+                payload: [:]
+            ))
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    /// Get the target stream ID (selected, most recently modified, or create new)
     /// Returns (streamId, isNewStream) tuple
     private func getTargetStreamId() throws -> (UUID, Bool) {
         guard let persistence = persistence else {
             throw QuickPanelError.persistenceNotConfigured
         }
 
-        // Get most recently modified stream
+        // Use selected stream if set
+        if let selectedId = selectedStreamId {
+            return (selectedId, false)
+        }
+
+        // Fall back to most recently modified stream
         if let recentStreamId = try persistence.getRecentlyModifiedStreamId() {
             return (recentStreamId, false)
         }
@@ -570,6 +623,11 @@ final class QuickPanelManager: ObservableObject {
         hosting.autoresizingMask = [.width, .height]
 
         newPanel.contentView?.addSubview(hosting)
+
+        // Apply stored appearance (light/dark mode)
+        if let appearance = currentAppearance {
+            newPanel.appearance = appearance
+        }
 
         self.panel = newPanel
         self.hostingView = hosting

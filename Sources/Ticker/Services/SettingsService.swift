@@ -1,36 +1,133 @@
 import Foundation
+import AppKit
 
-/// UserDefaults-backed settings storage
+/// Settings storage with Keychain-backed API keys and UserDefaults for preferences
 final class SettingsService {
     static let shared = SettingsService()
 
     private let defaults: UserDefaults
+    private let keychain = KeychainService.shared
 
+    // UserDefaults keys (non-sensitive settings)
     private enum Keys {
-        static let openaiAPIKey = "openai_api_key"
-        static let perplexityAPIKey = "perplexity_api_key"
         static let smartRoutingEnabled = "smart_routing_enabled"
+        static let defaultModel = "default_model"
+        static let appearance = "appearance"
+        static let hasCompletedKeychainMigration = "has_completed_keychain_migration"
+        static let hasCompletedOnboarding = "has_completed_onboarding"
+        // Legacy keys (for migration)
+        static let legacyOpenaiAPIKey = "openai_api_key"
+        static let legacyAnthropicAPIKey = "anthropic_api_key"
+        static let legacyPerplexityAPIKey = "perplexity_api_key"
+    }
+
+    // Keychain keys (sensitive data)
+    private enum KeychainKeys {
+        static let openaiAPIKey = "openai_api_key"
+        static let anthropicAPIKey = "anthropic_api_key"
+        static let perplexityAPIKey = "perplexity_api_key"
+    }
+
+    enum Appearance: String {
+        case light = "light"
+        case dark = "dark"
+        case system = "system"
+    }
+
+    enum DefaultModel: String {
+        case openai = "openai"
+        case anthropic = "anthropic"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        // Migrate keys from UserDefaults to Keychain (one-time)
+        migrateKeysToKeychain()
     }
 
-    // MARK: - API Keys
+    // MARK: - API Keys (Keychain-backed)
 
     var openaiAPIKey: String? {
-        get { defaults.string(forKey: Keys.openaiAPIKey) }
-        set { defaults.set(newValue, forKey: Keys.openaiAPIKey) }
+        get { keychain.get(key: KeychainKeys.openaiAPIKey) }
+        set {
+            if let value = newValue, !value.isEmpty {
+                try? keychain.save(key: KeychainKeys.openaiAPIKey, value: value)
+            } else {
+                keychain.delete(key: KeychainKeys.openaiAPIKey)
+            }
+        }
+    }
+
+    var anthropicAPIKey: String? {
+        get { keychain.get(key: KeychainKeys.anthropicAPIKey) }
+        set {
+            if let value = newValue, !value.isEmpty {
+                try? keychain.save(key: KeychainKeys.anthropicAPIKey, value: value)
+            } else {
+                keychain.delete(key: KeychainKeys.anthropicAPIKey)
+            }
+        }
     }
 
     var perplexityAPIKey: String? {
-        get { defaults.string(forKey: Keys.perplexityAPIKey) }
-        set { defaults.set(newValue, forKey: Keys.perplexityAPIKey) }
+        get { keychain.get(key: KeychainKeys.perplexityAPIKey) }
+        set {
+            if let value = newValue, !value.isEmpty {
+                try? keychain.save(key: KeychainKeys.perplexityAPIKey, value: value)
+            } else {
+                keychain.delete(key: KeychainKeys.perplexityAPIKey)
+            }
+        }
+    }
+
+    // MARK: - Keychain Migration
+
+    private func migrateKeysToKeychain() {
+        // Skip if already migrated
+        guard !defaults.bool(forKey: Keys.hasCompletedKeychainMigration) else { return }
+
+        print("[Settings] Migrating API keys from UserDefaults to Keychain...")
+
+        // Migrate OpenAI key
+        if let oldKey = defaults.string(forKey: Keys.legacyOpenaiAPIKey), !oldKey.isEmpty {
+            if keychain.get(key: KeychainKeys.openaiAPIKey) == nil {
+                try? keychain.save(key: KeychainKeys.openaiAPIKey, value: oldKey)
+                print("[Settings] Migrated OpenAI key to Keychain")
+            }
+            defaults.removeObject(forKey: Keys.legacyOpenaiAPIKey)
+        }
+
+        // Migrate Anthropic key
+        if let oldKey = defaults.string(forKey: Keys.legacyAnthropicAPIKey), !oldKey.isEmpty {
+            if keychain.get(key: KeychainKeys.anthropicAPIKey) == nil {
+                try? keychain.save(key: KeychainKeys.anthropicAPIKey, value: oldKey)
+                print("[Settings] Migrated Anthropic key to Keychain")
+            }
+            defaults.removeObject(forKey: Keys.legacyAnthropicAPIKey)
+        }
+
+        // Migrate Perplexity key
+        if let oldKey = defaults.string(forKey: Keys.legacyPerplexityAPIKey), !oldKey.isEmpty {
+            if keychain.get(key: KeychainKeys.perplexityAPIKey) == nil {
+                try? keychain.save(key: KeychainKeys.perplexityAPIKey, value: oldKey)
+                print("[Settings] Migrated Perplexity key to Keychain")
+            }
+            defaults.removeObject(forKey: Keys.legacyPerplexityAPIKey)
+        }
+
+        defaults.set(true, forKey: Keys.hasCompletedKeychainMigration)
+        print("[Settings] Keychain migration complete")
     }
 
     /// Check if the OpenAI API key is configured
-    var isAPIKeyConfigured: Bool {
+    var isOpenAIConfigured: Bool {
         guard let key = openaiAPIKey else { return false }
+        return !key.isEmpty
+    }
+
+    /// Check if the Anthropic API key is configured
+    var isAnthropicConfigured: Bool {
+        guard let key = anthropicAPIKey else { return false }
         return !key.isEmpty
     }
 
@@ -40,6 +137,24 @@ final class SettingsService {
         return !key.isEmpty
     }
 
+    /// Legacy alias for backward compatibility
+    var isAPIKeyConfigured: Bool {
+        isOpenAIConfigured
+    }
+
+    // MARK: - Onboarding
+
+    /// Whether the user has completed onboarding
+    var hasCompletedOnboarding: Bool {
+        get { defaults.bool(forKey: Keys.hasCompletedOnboarding) }
+        set { defaults.set(newValue, forKey: Keys.hasCompletedOnboarding) }
+    }
+
+    /// Whether onboarding should be shown (not completed and no API keys configured)
+    var needsOnboarding: Bool {
+        !hasCompletedOnboarding && !isOpenAIConfigured && !isAnthropicConfigured
+    }
+
     // MARK: - Routing Settings
 
     var smartRoutingEnabled: Bool {
@@ -47,19 +162,61 @@ final class SettingsService {
         set { defaults.set(newValue, forKey: Keys.smartRoutingEnabled) }
     }
 
+    var defaultModel: DefaultModel {
+        get {
+            guard let raw = defaults.string(forKey: Keys.defaultModel),
+                  let value = DefaultModel(rawValue: raw) else {
+                return .openai  // Default to OpenAI
+            }
+            return value
+        }
+        set { defaults.set(newValue.rawValue, forKey: Keys.defaultModel) }
+    }
+
+    // MARK: - Appearance
+
+    var appearance: Appearance {
+        get {
+            guard let raw = defaults.string(forKey: Keys.appearance),
+                  let value = Appearance(rawValue: raw) else {
+                return .light  // Default to light mode
+            }
+            return value
+        }
+        set { defaults.set(newValue.rawValue, forKey: Keys.appearance) }
+    }
+
+    /// Get the NSAppearance for the current setting
+    var nsAppearance: NSAppearance? {
+        switch appearance {
+        case .light:
+            return NSAppearance(named: .aqua)
+        case .dark:
+            return NSAppearance(named: .darkAqua)
+        case .system:
+            return nil  // Use system default
+        }
+    }
+
     // MARK: - Settings Dictionary (for bridge)
 
     /// Get all settings as a dictionary for sending to React
     func allSettings() -> [String: Any] {
         var settings: [String: Any] = [
-            "hasOpenAIKey": isAPIKeyConfigured,
+            "hasOpenAIKey": isOpenAIConfigured,
+            "hasAnthropicKey": isAnthropicConfigured,
             "hasPerplexityKey": isPerplexityConfigured,
-            "smartRoutingEnabled": smartRoutingEnabled
+            "smartRoutingEnabled": smartRoutingEnabled,
+            "defaultModel": defaultModel.rawValue,
+            "appearance": appearance.rawValue
         ]
 
         // Include masked key preview if set
         if let key = openaiAPIKey, !key.isEmpty {
             settings["openaiKeyPreview"] = maskAPIKey(key)
+        }
+        if let key = anthropicAPIKey, !key.isEmpty {
+            settings["anthropicKeyPreview"] = maskAPIKey(key)
         }
         if let key = perplexityAPIKey, !key.isEmpty {
             settings["perplexityKeyPreview"] = maskAPIKey(key)

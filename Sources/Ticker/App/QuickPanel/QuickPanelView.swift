@@ -34,6 +34,9 @@ struct QuickPanelView: View {
                 statusView(status)
             }
 
+            // Stream destination picker
+            streamDestinationPicker
+
             // Context badge (if text/image was captured)
             if let context = manager.context, context.hasContent {
                 contextBadge(context: context)
@@ -122,6 +125,62 @@ struct QuickPanelView: View {
             return "Image attached"
         }
         return "Context attached"
+    }
+
+    // MARK: - Stream Destination Picker
+
+    private var streamDestinationPicker: some View {
+        Menu {
+            ForEach(manager.availableStreams, id: \.id) { stream in
+                Button(action: { manager.selectedStreamId = stream.id }) {
+                    HStack {
+                        Text(stream.title)
+                        if manager.selectedStreamId == stream.id {
+                            Spacer()
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+
+            if !manager.availableStreams.isEmpty {
+                Divider()
+            }
+
+            Button(action: { manager.createAndSelectNewStream() }) {
+                HStack {
+                    Image(systemName: "plus")
+                    Text("New Stream...")
+                }
+            }
+        } label: {
+            HStack(spacing: Spacing.xs) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 11))
+                    .foregroundColor(Colors.secondaryText)
+                Text(selectedStreamTitle)
+                    .font(.system(size: 11))
+                    .foregroundColor(Colors.secondaryText)
+                    .lineLimit(1)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9))
+                    .foregroundColor(Colors.tertiaryText)
+            }
+            .padding(.horizontal, Spacing.sm)
+            .padding(.vertical, Spacing.xs)
+            .background(Colors.hoverBackground)
+            .cornerRadius(Spacing.radiusSm)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private var selectedStreamTitle: String {
+        if let id = manager.selectedStreamId,
+           let stream = manager.availableStreams.first(where: { $0.id == id }) {
+            return stream.title
+        }
+        return "Select stream..."
     }
 
     // MARK: - Ephemeral Conversation Response Area

@@ -1,6 +1,12 @@
 import AppKit
+import SwiftUI
 import WebKit
 import ApplicationServices
+
+// Notification for appearance changes
+extension Notification.Name {
+    static let appearanceDidChange = Notification.Name("appearanceDidChange")
+}
 
 // Manual entry point for proper app initialization
 @main
@@ -17,6 +23,7 @@ struct TickerApp {
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var mainWindow: NSWindow?
     private var webViewManager: WebViewManager?
+    private var onboardingWindow: NSWindow?
 
     // Menu bar (status item)
     private var statusItem: NSStatusItem?
@@ -28,10 +35,73 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupMenuBar()
+        setupAppearanceObserver()
+
+        // Check if onboarding is needed
+        if SettingsService.shared.needsOnboarding {
+            showOnboarding()
+        } else {
+            completeStartup()
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    /// Complete startup after onboarding (or skip if not needed)
+    private func completeStartup() {
         setupMainWindow()
         setupQuickPanel()
         requestAccessibilityPermissionIfNeeded()
-        NSApp.activate(ignoringOtherApps: true)
+        // Apply initial appearance after Quick Panel is set up
+        Task { @MainActor in
+            self.applyAppearance()
+        }
+    }
+
+    // MARK: - Onboarding
+
+    private func showOnboarding() {
+        let onboardingView = OnboardingView {
+            // Onboarding complete callback
+            self.onboardingWindow?.close()
+            self.onboardingWindow = nil
+            self.completeStartup()
+        }
+
+        let hostingView = NSHostingView(rootView: onboardingView)
+
+        onboardingWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 380),
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        onboardingWindow?.title = "Welcome to Ticker"
+        onboardingWindow?.contentView = hostingView
+        onboardingWindow?.center()
+        onboardingWindow?.isReleasedWhenClosed = false
+        onboardingWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    private func setupAppearanceObserver() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleAppearanceChange),
+            name: .appearanceDidChange,
+            object: nil
+        )
+    }
+
+    @objc private func handleAppearanceChange() {
+        Task { @MainActor in
+            self.applyAppearance()
+        }
+    }
+
+    @MainActor
+    private func applyAppearance() {
+        let appearance = SettingsService.shared.nsAppearance
+        mainWindow?.appearance = appearance
+        quickPanelManager?.updateAppearance(appearance)
     }
 
     /// Request accessibility permission early so it's ready when Quick Panel is first used
@@ -174,7 +244,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         mainWindow?.title = "Ticker"
         mainWindow?.minSize = NSSize(width: 300, height: 400)
-        mainWindow?.appearance = NSAppearance(named: .aqua)  // Force light mode
         mainWindow?.delegate = self  // Handle close to hide instead of quit
         mainWindow?.level = .floating  // Always on top
         mainWindow?.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]

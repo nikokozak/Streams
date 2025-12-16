@@ -2,6 +2,15 @@
 
 macOS research app: Swift backend + React/TipTap frontend in WKWebView + global Quick Panel.
 
+## Research Requirement
+
+**Before writing or modifying any library-based code** (TipTap, Zustand, GRDB, SwiftUI, WKWebView APIs, etc.), you MUST search the web for current documentation and best practices. Libraries evolve rapidly — do not rely on training data. Verify API signatures, check for deprecations, and confirm the idiomatic approach for 2025. This applies especially to:
+- TipTap extensions and markdown handling
+- Zustand store patterns and middleware
+- GRDB migrations and async patterns
+- WKWebView/WebKit bridge APIs
+- SwiftUI state management and lifecycle
+
 ## Commands
 
 ```bash

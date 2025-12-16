@@ -1,31 +1,40 @@
 import SwiftUI
 
-/// Color system for Quick Panel UI
+/// Color system for Quick Panel UI - adapts to light/dark mode
 enum Colors {
     // MARK: - Backgrounds
 
-    /// Main window background - solid white
-    static let windowBackground = Color.white
+    /// Main window background - adapts to appearance
+    static let windowBackground = Color(NSColor.windowBackgroundColor)
 
-    /// User message/quote background - light blue
-    static let userMessageBackground = Color(red: 239/255, green: 246/255, blue: 255/255)
+    /// User message/quote background - light blue / dark blue
+    static let userMessageBackground = Color(
+        light: Color(red: 239/255, green: 246/255, blue: 255/255),
+        dark: Color(red: 30/255, green: 41/255, blue: 59/255)
+    )
 
-    /// AI message background - very light gray
-    static let aiMessageBackground = Color(red: 250/255, green: 251/255, blue: 252/255)
+    /// AI message background - subtle gray
+    static let aiMessageBackground = Color(
+        light: Color(red: 250/255, green: 251/255, blue: 252/255),
+        dark: Color(red: 38/255, green: 38/255, blue: 38/255)
+    )
 
-    /// Hover state background - subtle light gray
-    static let hoverBackground = Color(red: 241/255, green: 245/255, blue: 249/255)
+    /// Hover state background - subtle gray
+    static let hoverBackground = Color(
+        light: Color(red: 241/255, green: 245/255, blue: 249/255),
+        dark: Color(red: 45/255, green: 45/255, blue: 45/255)
+    )
 
     // MARK: - Text Colors
 
-    /// Primary text color - dark slate
-    static let primaryText = Color(red: 30/255, green: 41/255, blue: 59/255)
+    /// Primary text color - adapts to appearance
+    static let primaryText = Color(NSColor.labelColor)
 
-    /// Secondary text color - medium slate
-    static let secondaryText = Color(red: 100/255, green: 116/255, blue: 139/255)
+    /// Secondary text color - adapts to appearance
+    static let secondaryText = Color(NSColor.secondaryLabelColor)
 
-    /// Tertiary text color - light slate
-    static let tertiaryText = Color(red: 100/255, green: 116/255, blue: 139/255)
+    /// Tertiary text color - adapts to appearance
+    static let tertiaryText = Color(NSColor.tertiaryLabelColor)
 
     /// Error text color
     static let errorText = Color(red: 239/255, green: 68/255, blue: 68/255)
@@ -43,4 +52,20 @@ enum Colors {
 
     /// Error accent - red
     static let errorAccent = Color(red: 239/255, green: 68/255, blue: 68/255)
+}
+
+// MARK: - Color Extension for Light/Dark Mode
+
+extension Color {
+    /// Creates a color that adapts to light and dark appearance
+    init(light: Color, dark: Color) {
+        self.init(NSColor(name: nil, dynamicProvider: { appearance in
+            switch appearance.bestMatch(from: [.aqua, .darkAqua]) {
+            case .darkAqua:
+                return NSColor(dark)
+            default:
+                return NSColor(light)
+            }
+        }))
+    }
 }

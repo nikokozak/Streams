@@ -1,15 +1,22 @@
 import { useState, useEffect } from 'react';
 import { bridge } from '../types';
 
+type Appearance = 'light' | 'dark' | 'system';
+type DefaultModel = 'openai' | 'anthropic';
+
 interface SettingsData {
   hasOpenAIKey: boolean;
   openaiKeyPreview?: string;
+  hasAnthropicKey: boolean;
+  anthropicKeyPreview?: string;
   hasPerplexityKey: boolean;
   perplexityKeyPreview?: string;
   smartRoutingEnabled: boolean;
+  defaultModel: DefaultModel;
   classifierReady?: boolean;
   classifierLoading?: boolean;
   classifierError?: string;
+  appearance: Appearance;
 }
 
 interface SettingsProps {
@@ -19,10 +26,13 @@ interface SettingsProps {
 export function Settings({ onClose }: SettingsProps) {
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [openaiKey, setOpenaiKey] = useState('');
+  const [anthropicKey, setAnthropicKey] = useState('');
   const [perplexityKey, setPerplexityKey] = useState('');
   const [showKey, setShowKey] = useState(false);
+  const [showAnthropicKey, setShowAnthropicKey] = useState(false);
   const [showPerplexityKey, setShowPerplexityKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [anthropicSaved, setAnthropicSaved] = useState(false);
   const [perplexitySaved, setPerplexitySaved] = useState(false);
 
   // Load settings on mount
@@ -46,6 +56,19 @@ export function Settings({ onClose }: SettingsProps) {
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     setOpenaiKey(''); // Clear input after save
+    // Reload settings to update preview
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
+  };
+
+  const handleSaveAnthropic = () => {
+    bridge.send({
+      type: 'saveSettings',
+      payload: { anthropicAPIKey: anthropicKey },
+    });
+    setAnthropicSaved(true);
+    setTimeout(() => setAnthropicSaved(false), 2000);
+    setAnthropicKey(''); // Clear input after save
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
   };
 
   const handleSavePerplexity = () => {
@@ -56,6 +79,31 @@ export function Settings({ onClose }: SettingsProps) {
     setPerplexitySaved(true);
     setTimeout(() => setPerplexitySaved(false), 2000);
     setPerplexityKey(''); // Clear input after save
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
+  };
+
+  const handleDeleteOpenAI = () => {
+    bridge.send({
+      type: 'saveSettings',
+      payload: { openaiAPIKey: '' },
+    });
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
+  };
+
+  const handleDeleteAnthropic = () => {
+    bridge.send({
+      type: 'saveSettings',
+      payload: { anthropicAPIKey: '' },
+    });
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
+  };
+
+  const handleDeletePerplexity = () => {
+    bridge.send({
+      type: 'saveSettings',
+      payload: { perplexityAPIKey: '' },
+    });
+    setTimeout(() => bridge.send({ type: 'loadSettings' }), 100);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -88,13 +136,15 @@ export function Settings({ onClose }: SettingsProps) {
                 placeholder={settings?.openaiKeyPreview || 'sk-...'}
                 autoComplete="off"
               />
-              <button
-                className="settings-toggle-visibility"
-                onClick={() => setShowKey(!showKey)}
-                type="button"
-              >
-                {showKey ? 'Hide' : 'Show'}
-              </button>
+              {openaiKey && (
+                <button
+                  className="settings-toggle-visibility"
+                  onClick={() => setShowKey(!showKey)}
+                  type="button"
+                >
+                  {showKey ? 'Hide' : 'Show'}
+                </button>
+              )}
               <button
                 className="settings-save-key"
                 onClick={handleSaveOpenAI}
@@ -102,11 +152,64 @@ export function Settings({ onClose }: SettingsProps) {
               >
                 {saved ? 'Saved!' : 'Save'}
               </button>
+              {settings?.hasOpenAIKey && !openaiKey && (
+                <button
+                  className="settings-delete-key"
+                  onClick={handleDeleteOpenAI}
+                  type="button"
+                >
+                  Delete
+                </button>
+              )}
             </div>
             <p className="settings-hint">
               {settings?.hasOpenAIKey
                 ? 'Key is configured. Enter a new key to replace it.'
                 : 'Required for AI features. Get one at platform.openai.com'}
+            </p>
+          </div>
+
+          <div className="settings-field">
+            <label htmlFor="anthropic-key">Anthropic API Key</label>
+            <div className="settings-key-input">
+              <input
+                id="anthropic-key"
+                type={showAnthropicKey ? 'text' : 'password'}
+                value={anthropicKey}
+                onChange={(e) => setAnthropicKey(e.target.value)}
+                placeholder={settings?.anthropicKeyPreview || 'sk-ant-...'}
+                autoComplete="off"
+              />
+              {anthropicKey && (
+                <button
+                  className="settings-toggle-visibility"
+                  onClick={() => setShowAnthropicKey(!showAnthropicKey)}
+                  type="button"
+                >
+                  {showAnthropicKey ? 'Hide' : 'Show'}
+                </button>
+              )}
+              <button
+                className="settings-save-key"
+                onClick={handleSaveAnthropic}
+                disabled={!anthropicKey}
+              >
+                {anthropicSaved ? 'Saved!' : 'Save'}
+              </button>
+              {settings?.hasAnthropicKey && !anthropicKey && (
+                <button
+                  className="settings-delete-key"
+                  onClick={handleDeleteAnthropic}
+                  type="button"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+            <p className="settings-hint">
+              {settings?.hasAnthropicKey
+                ? 'Key is configured. Enter a new key to replace it.'
+                : 'For Claude models. Get one at console.anthropic.com'}
             </p>
           </div>
 
@@ -121,13 +224,15 @@ export function Settings({ onClose }: SettingsProps) {
                 placeholder={settings?.perplexityKeyPreview || 'pplx-...'}
                 autoComplete="off"
               />
-              <button
-                className="settings-toggle-visibility"
-                onClick={() => setShowPerplexityKey(!showPerplexityKey)}
-                type="button"
-              >
-                {showPerplexityKey ? 'Hide' : 'Show'}
-              </button>
+              {perplexityKey && (
+                <button
+                  className="settings-toggle-visibility"
+                  onClick={() => setShowPerplexityKey(!showPerplexityKey)}
+                  type="button"
+                >
+                  {showPerplexityKey ? 'Hide' : 'Show'}
+                </button>
+              )}
               <button
                 className="settings-save-key"
                 onClick={handleSavePerplexity}
@@ -135,6 +240,15 @@ export function Settings({ onClose }: SettingsProps) {
               >
                 {perplexitySaved ? 'Saved!' : 'Save'}
               </button>
+              {settings?.hasPerplexityKey && !perplexityKey && (
+                <button
+                  className="settings-delete-key"
+                  onClick={handleDeletePerplexity}
+                  type="button"
+                >
+                  Delete
+                </button>
+              )}
             </div>
             <p className="settings-hint">
               {settings?.hasPerplexityKey
@@ -145,7 +259,44 @@ export function Settings({ onClose }: SettingsProps) {
         </section>
 
         <section className="settings-section">
-          <h2>AI Routing</h2>
+          <h2>Default Model</h2>
+          <div className="settings-field">
+            <div className="settings-model-options">
+              <button
+                className={`settings-model-btn ${settings?.defaultModel === 'openai' ? 'settings-model-btn--active' : ''}`}
+                onClick={() => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { defaultModel: 'openai' },
+                  });
+                }}
+                disabled={!settings?.hasOpenAIKey}
+              >
+                <span className="settings-model-name">OpenAI</span>
+                <span className="settings-model-detail">GPT-4o</span>
+              </button>
+              <button
+                className={`settings-model-btn ${settings?.defaultModel === 'anthropic' ? 'settings-model-btn--active' : ''}`}
+                onClick={() => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { defaultModel: 'anthropic' },
+                  });
+                }}
+                disabled={!settings?.hasAnthropicKey}
+              >
+                <span className="settings-model-name">Anthropic</span>
+                <span className="settings-model-detail">Claude Sonnet</span>
+              </button>
+            </div>
+            <p className="settings-hint">
+              Select the default AI provider for responses. Requires the corresponding API key to be configured.
+            </p>
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h2>Smart Routing (Perplexity)</h2>
           <div className="settings-field">
             <label
               className="settings-toggle-label"
@@ -180,6 +331,67 @@ export function Settings({ onClose }: SettingsProps) {
                 ) : null}
               </p>
             )}
+          </div>
+        </section>
+
+        <section className="settings-section">
+          <h2>Appearance</h2>
+          <div className="settings-field">
+            <label>Theme</label>
+            <div className="settings-appearance-options">
+              <button
+                className={`settings-appearance-btn ${settings?.appearance === 'light' ? 'settings-appearance-btn--active' : ''}`}
+                onClick={() => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { appearance: 'light' },
+                  });
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="5" />
+                  <line x1="12" y1="1" x2="12" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="23" />
+                  <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                  <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                  <line x1="1" y1="12" x2="3" y2="12" />
+                  <line x1="21" y1="12" x2="23" y2="12" />
+                  <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                  <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                </svg>
+                Light
+              </button>
+              <button
+                className={`settings-appearance-btn ${settings?.appearance === 'dark' ? 'settings-appearance-btn--active' : ''}`}
+                onClick={() => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { appearance: 'dark' },
+                  });
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                </svg>
+                Dark
+              </button>
+              <button
+                className={`settings-appearance-btn ${settings?.appearance === 'system' ? 'settings-appearance-btn--active' : ''}`}
+                onClick={() => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { appearance: 'system' },
+                  });
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
+                  <line x1="8" y1="21" x2="16" y2="21" />
+                  <line x1="12" y1="17" x2="12" y2="21" />
+                </svg>
+                System
+              </button>
+            </div>
           </div>
         </section>
 

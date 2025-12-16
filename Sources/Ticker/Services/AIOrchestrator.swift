@@ -149,17 +149,25 @@ final class AIOrchestrator {
     private func selectProvider(for intent: QueryIntent) -> LLMProvider? {
         switch intent {
         case .search:
-            // Prefer Perplexity for search, fall back to OpenAI
+            // Prefer Perplexity for search, fall back to default model
             if let perplexity = providers["perplexity"], perplexity.isConfigured {
                 return perplexity
             }
-            // Fall through to check OpenAI
+            // Fall through to use default model
             fallthrough
 
         case .knowledge, .expand, .summarize, .rewrite, .extract, .ambiguous:
-            // Use OpenAI for knowledge-based tasks (if configured)
+            // Use the user's selected default model
+            let defaultModelId = settings.defaultModel.rawValue
+            if let defaultProvider = providers[defaultModelId], defaultProvider.isConfigured {
+                return defaultProvider
+            }
+            // Fall back to any configured provider (OpenAI first, then Anthropic)
             if let openai = providers["openai"], openai.isConfigured {
                 return openai
+            }
+            if let anthropic = providers["anthropic"], anthropic.isConfigured {
+                return anthropic
             }
             // Last resort: return any configured provider
             return configuredProviders.first

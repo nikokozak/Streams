@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
 import { Settings } from './components/Settings';
+import { ToastContainer } from './components/Toast';
 import { useBlockStore } from './store/blockStore';
 
 type View = 'list' | 'stream' | 'settings';
@@ -70,6 +71,11 @@ export function App() {
             bridge.send({ type: 'loadStream', payload: { id: streamId } });
           }
           break;
+        case 'streamsChanged':
+          // Quick Panel created a new stream - reload the list
+          console.log('[App] Streams changed, reloading list');
+          bridge.send({ type: 'loadStreams' });
+          break;
       }
     });
 
@@ -131,33 +137,44 @@ export function App() {
   };
 
   if (view === 'settings') {
-    return <Settings onClose={handleCloseSettings} />;
+    return (
+      <>
+        <Settings onClose={handleCloseSettings} />
+        <ToastContainer />
+      </>
+    );
   }
 
   if (view === 'stream' && currentStream) {
     return (
-      <StreamEditor
-        stream={currentStream}
-        onBack={handleBackToList}
-        onDelete={handleDeleteStream}
-        onNavigateToStream={handleNavigateToStream}
-        pendingCellId={pendingCellId}
-        pendingSourceId={pendingSourceId}
-        onClearPendingCell={() => setPendingCellId(null)}
-        onClearPendingSource={() => setPendingSourceId(null)}
-      />
+      <>
+        <StreamEditor
+          stream={currentStream}
+          onBack={handleBackToList}
+          onDelete={handleDeleteStream}
+          onNavigateToStream={handleNavigateToStream}
+          pendingCellId={pendingCellId}
+          pendingSourceId={pendingSourceId}
+          onClearPendingCell={() => setPendingCellId(null)}
+          onClearPendingSource={() => setPendingSourceId(null)}
+        />
+        <ToastContainer />
+      </>
     );
   }
 
   return (
-    <StreamListView
-      streams={streams}
-      isLoading={isLoading}
-      isLoadingStream={isLoadingStream}
-      onSelect={handleSelectStream}
-      onCreate={handleCreateStream}
-      onSettings={handleOpenSettings}
-    />
+    <>
+      <StreamListView
+        streams={streams}
+        isLoading={isLoading}
+        isLoadingStream={isLoadingStream}
+        onSelect={handleSelectStream}
+        onCreate={handleCreateStream}
+        onSettings={handleOpenSettings}
+      />
+      <ToastContainer />
+    </>
   );
 }
 

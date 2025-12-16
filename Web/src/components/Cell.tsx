@@ -243,9 +243,18 @@ export function Cell({
         </div>
       )}
 
-      {error ? (
-        <div className="cell-error-message">{error}</div>
-      ) : showRestatementView ? (
+      {/* Show error banner above content, not replacing it */}
+      {error && (
+        <div className="cell-error-banner">
+          <span className="cell-error-icon">!</span>
+          <span className="cell-error-text">{error}</span>
+          <button className="cell-error-dismiss" onClick={() => useBlockStore.getState().clearError(cell.id)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {showRestatementView ? (
         // Display mode: show restatement as a heading
         <div
           className={`cell-restatement ${showRestatementAnim ? 'cell-restatement--animated' : ''}`}

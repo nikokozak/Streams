@@ -9,6 +9,7 @@ final class WebViewManager: NSObject {
     let persistence: PersistenceService?
     private let sourceService: SourceService?
     private let aiService: AIService
+    private let anthropicService: AnthropicService
     private let perplexityService: PerplexityService
     let orchestrator: AIOrchestrator  // Exposed for Quick Panel ephemeral AI
     private let dependencyService: DependencyService
@@ -42,6 +43,7 @@ final class WebViewManager: NSObject {
 
         // Initialize services
         self.aiService = AIService()
+        self.anthropicService = AnthropicService()
         self.perplexityService = PerplexityService()
 
         // Initialize RAG services
@@ -51,6 +53,7 @@ final class WebViewManager: NSObject {
         // Initialize orchestrator and register providers
         self.orchestrator = AIOrchestrator()
         orchestrator.register(aiService)
+        orchestrator.register(anthropicService)
         orchestrator.register(perplexityService)
 
         // Initialize dependency service
@@ -910,6 +913,11 @@ final class WebViewManager: NSObject {
                 SettingsService.shared.openaiAPIKey = openaiKey.isEmpty ? nil : openaiKey
             }
 
+            // Save Anthropic API key if provided
+            if let anthropicKey = payload["anthropicAPIKey"]?.value as? String {
+                SettingsService.shared.anthropicAPIKey = anthropicKey.isEmpty ? nil : anthropicKey
+            }
+
             // Save Perplexity API key if provided
             if let perplexityKey = payload["perplexityAPIKey"]?.value as? String {
                 SettingsService.shared.perplexityAPIKey = perplexityKey.isEmpty ? nil : perplexityKey
@@ -918,6 +926,20 @@ final class WebViewManager: NSObject {
             // Save smart routing setting if provided
             if let smartRouting = payload["smartRoutingEnabled"]?.value as? Bool {
                 SettingsService.shared.smartRoutingEnabled = smartRouting
+            }
+
+            // Save default model setting if provided
+            if let modelValue = payload["defaultModel"]?.value as? String,
+               let model = SettingsService.DefaultModel(rawValue: modelValue) {
+                SettingsService.shared.defaultModel = model
+            }
+
+            // Save appearance setting if provided
+            if let appearanceValue = payload["appearance"]?.value as? String,
+               let appearance = SettingsService.Appearance(rawValue: appearanceValue) {
+                SettingsService.shared.appearance = appearance
+                // Notify AppDelegate to update window appearances
+                NotificationCenter.default.post(name: .appearanceDidChange, object: nil)
             }
 
             // Send back updated settings
