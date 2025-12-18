@@ -2,6 +2,37 @@
 
 macOS research app: Swift backend + React/TipTap frontend in WKWebView + global Quick Panel.
 
+## CRITICAL: Working Practices
+
+**These rules override default behavior. Follow them exactly.**
+
+### Before Any Implementation
+
+1. **Restate the requirement in your own words** and get explicit confirmation before writing code
+2. **Ask clarifying questions** if there is ANY ambiguity about what is being requested
+3. **Distinguish between** what the user said vs what you interpreted vs what you assume
+4. **If a task seems straightforward, be MORE suspicious** — that's when misunderstandings happen
+
+### During Implementation
+
+1. **Work in small, verifiable increments** — commit and test frequently
+2. **Stop and ask** if scope expands or you encounter unexpected complexity
+3. **Do not "improve" or add features** beyond what was explicitly requested
+4. **If you're uncertain, say so** — don't paper over uncertainty with code
+
+### After Implementation
+
+1. **Describe what you built** in plain terms — does it match what was asked?
+2. **Identify what you did NOT implement** — make omissions explicit
+3. **Ask the user to verify** before moving on
+
+### Collaboration with GPT-5.2
+
+For non-trivial work:
+- Ask GPT-5.2 for blast radius analysis and edge cases BEFORE starting
+- Ask GPT-5.2 to review diffs AFTER each change
+- If GPT-5.2 flags a concern, address it before continuing
+
 ## Commands
 
 ```bash
@@ -101,20 +132,31 @@ Global capture panel accessible via **Cmd+L** from any app. Captures selected te
 - After 15min idle: Show stream picker
 - No streams: Create "Untitled"
 
-**Reference Implementation:** See `/Users/niko/Documents/ITP/ChatWindow/` for patterns (HotkeyService, SelectionReaderService, QuickPanelManager)
+## Current Work: Single-Editor Refactor
 
-## Known Technical Debt
+**Branch:** `feature/single-editor-refactor`
+**Goal:** Enable true cross-cell text selection (click-drag to highlight text across cell boundaries)
 
-### MAJOR: Markdown-first editing (not yet implemented)
-Currently cells store rendered HTML and TipTap edits the rich text directly. This means users cannot edit the underlying markdown source (e.g., change `## Header` to `### Header`).
+**Why this is needed:**
+The current architecture has N separate TipTap editor instances (one per cell). Browser/ProseMirror selection cannot span multiple contenteditable elements. To support text selection across cells, we need ONE editor instance with cells as nodes within a single document.
 
-**Required refactor:**
-- Store raw markdown as the source of truth, not HTML
-- Render markdown → HTML only for display
-- TipTap edits should produce markdown, not HTML
-- Consider CodeMirror/Monaco for true markdown editing, or TipTap with markdown storage
+**Key constraints (from GPT-5.2):**
+- Schema: `doc -> cellBlock+`, where `cellBlock -> block+` (rich content, not inline-only)
+- Provenance via attributes (`groupId`, `groupRole`), not structural nesting
+- TipTap as source of truth during editing
+- Cells can contain rich block content (headings, lists, code) without forcing splits
 
-This is a fundamental architecture change affecting: `CellEditor.tsx`, `markdownToHtml()`, cell persistence, AI response handling.
+**Guiding document:** `SINGLE_EDITOR_REFACTOR.md` (to be created with detailed implementation plan)
+
+**Previous attempt failed because:**
+1. Made cellBlock inline-only, forcing AI response splits
+2. Fought reconciliation battles between store and TipTap
+3. Scope was too large without proper planning
+
+**This attempt will:**
+1. Have a detailed plan from GPT-5.2 before any code
+2. Work in small, verified increments
+3. Cross-check every step
 
 ## Code Standards
 
