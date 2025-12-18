@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
+import { UnifiedStreamEditor } from './components/UnifiedStreamEditor';
 import { Settings } from './components/Settings';
 import { useBlockStore } from './store/blockStore';
+import { USE_UNIFIED_EDITOR } from './utils/featureFlags';
 
 type View = 'list' | 'stream' | 'settings';
 
@@ -135,8 +137,11 @@ export function App() {
   }
 
   if (view === 'stream' && currentStream) {
+    // Feature flag: use unified editor for cross-cell selection support
+    const EditorComponent = USE_UNIFIED_EDITOR ? UnifiedStreamEditor : StreamEditor;
+
     return (
-      <StreamEditor
+      <EditorComponent
         stream={currentStream}
         onBack={handleBackToList}
         onDelete={handleDeleteStream}
