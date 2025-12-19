@@ -1,13 +1,11 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { Cell } from '../types';
-import { VersionDropdown } from './VersionDropdown';
 import { PromptEditor } from './PromptEditor';
 import { useBlockStore } from '../store/blockStore';
 
 interface CellOverlayProps {
   cell: Cell;
   onClose: () => void;
-  onSelectVersion?: (versionId: string) => void;
   onScrollToCell?: (cellId: string) => void;
   onToggleLive?: (isLive: boolean) => void;
   onRegenerate?: (newPrompt: string) => void;
@@ -19,12 +17,10 @@ interface CellOverlayProps {
  * - Model used and timestamp
  * - Live status indicator
  * - Cells that reference this cell
- * - Version history dropdown
  */
 export function CellOverlay({
   cell,
   onClose,
-  onSelectVersion,
   onScrollToCell,
   onToggleLive,
   onRegenerate,
@@ -40,7 +36,9 @@ export function CellOverlay({
   );
 
   // Find cells that reference this cell
-  const referencingCells = Object.values(blocks).filter((block) => {
+  // NOTE: `blocks` is a Map in zustand store (Slice 03+).
+  // Use `.values()` rather than `Object.values()` so this works in both legacy + unified.
+  const referencingCells = Array.from(blocks.values()).filter((block) => {
     if (!block.references || block.id === cell.id) return false;
     return block.references.includes(cell.id);
   });
@@ -77,33 +75,14 @@ export function CellOverlay({
     }
   }, [editedPromptHtml, htmlToPlainText, onRegenerate, onClose]);
 
-  // Close on click outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      const target = e.target as Node;
-
-      // Don't close if clicking inside the overlay
-      if (overlayRef.current?.contains(target)) {
-        return;
-      }
-
-      // Don't close if clicking inside a tippy popup (reference autocomplete)
-      const tippyPopup = (target as Element).closest?.('.tippy-box');
-      if (tippyPopup) {
-        return;
-      }
-
-      onClose();
-    };
-    // Use timeout to avoid immediate close from the click that opened it
-    const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handleClickOutside);
-    }, 0);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [onClose]);
+  // NOTE: We intentionally do NOT close on outside click.
+  // In unified mode the overlay sits inside a ProseMirror NodeView, and "click outside"
+  // is both easy to mis-detect (due to event retargeting) and undesirable UX.
+  //
+  // Close rules (per request):
+  // - ESC
+  // - explicit X button
+  // - clicking the info icon again (handled by the caller)
 
   const handleReferenceClick = useCallback(
     (cellId: string) => {
@@ -113,15 +92,6 @@ export function CellOverlay({
       }
     },
     [onScrollToCell, onClose]
-  );
-
-  const handleVersionSelect = useCallback(
-    (versionId: string) => {
-      if (onSelectVersion) {
-        onSelectVersion(versionId);
-      }
-    },
-    [onSelectVersion]
   );
 
   // Format timestamp
@@ -141,10 +111,9 @@ export function CellOverlay({
   const modelId = cell.modelId;
   const isLive = cell.processingConfig?.refreshTrigger === 'onStreamOpen';
   const hasDependencyRefresh = cell.processingConfig?.refreshTrigger === 'onDependencyChange';
-  const versions = cell.versions || [];
 
   return (
-    <div className="cell-overlay" ref={overlayRef}>
+    <div className="cell-overlay" ref={overlayRef} contentEditable={false}>
       {/* Header with close button */}
       <div className="cell-overlay-header">
         <span className="cell-overlay-title">Cell Details</span>
@@ -186,12 +155,8 @@ export function CellOverlay({
       {/* Metadata row */}
       <div className="cell-overlay-section">
         <div className="cell-overlay-meta">
-          {modelId && (
-            <>
-              <span className="cell-overlay-model">{modelId}</span>
-              <span className="cell-overlay-separator">·</span>
-            </>
-          )}
+          <span className="cell-overlay-model">{modelId || 'AI'}</span>
+          <span className="cell-overlay-separator">·</span>
           <span className="cell-overlay-time">{formatDate(timestamp)}</span>
           {isLive && (
             <>
@@ -243,18 +208,6 @@ export function CellOverlay({
               </button>
             ))}
           </div>
-        </div>
-      )}
-
-      {/* Version history */}
-      {versions.length > 1 && (
-        <div className="cell-overlay-section">
-          <div className="cell-overlay-label">Version History</div>
-          <VersionDropdown
-            versions={versions}
-            activeVersionId={cell.activeVersionId}
-            onSelectVersion={handleVersionSelect}
-          />
         </div>
       )}
     </div>

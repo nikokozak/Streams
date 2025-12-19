@@ -1,10 +1,92 @@
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import { NodeViewProps } from '@tiptap/core';
-import { useState } from 'react';
+import { Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { useState, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
 import { useBlockStore } from '../store/blockStore';
 import { bridge } from '../types';
+import { CellOverlay } from '../components/CellOverlay';
+import { buildImageBlock, extractImageURLs, extractImages, stripHtml } from '../utils/html';
 
 const IS_DEV = Boolean((import.meta as any).env?.DEV);
+
+// Global drag state to coordinate between CellBlockViews
+let globalDraggedCellId: string | null = null;
+let lastReorderTime = 0;
+let persistReorderTimeout: number | null = null;
+let idleCleanupTimeout: number | null = null;
+
+// 1x1 transparent gif (prevents the browser drag image from "snapping back" visually)
+const TRANSPARENT_DRAG_IMG_SRC =
+  'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const transparentDragImage = (() => {
+  const img = new Image();
+  img.src = TRANSPARENT_DRAG_IMG_SRC;
+  return img;
+})();
+
+function persistReorderToSwift() {
+  const store = useBlockStore.getState();
+  const { streamId, blockOrder } = store;
+  if (!streamId) {
+    if (IS_DEV) console.warn('[CellBlockView] reorderBlocks: missing streamId in store; skipping persist');
+    return;
+  }
+
+  const orders = blockOrder.map((id, order) => ({ id, order }));
+  if (IS_DEV) {
+    console.log('[CellBlockView] Persist reorderBlocks', {
+      streamId,
+      count: orders.length,
+      head: orders.slice(0, 3),
+    });
+  }
+  bridge.send({
+    type: 'reorderBlocks',
+    payload: { streamId, orders },
+  });
+}
+
+function schedulePersistReorder() {
+  if (persistReorderTimeout !== null) {
+    window.clearTimeout(persistReorderTimeout);
+  }
+  // Debounce: we only persist after the user pauses dragging.
+  persistReorderTimeout = window.setTimeout(() => {
+    persistReorderTimeout = null;
+    if (globalDraggedCellId) persistReorderToSwift();
+  }, 250);
+}
+
+function scheduleIdleCleanup() {
+  if (idleCleanupTimeout !== null) {
+    window.clearTimeout(idleCleanupTimeout);
+  }
+  // If dragend/drop never fires (NodeView churn), clean up anyway.
+  idleCleanupTimeout = window.setTimeout(() => {
+    idleCleanupTimeout = null;
+    if (globalDraggedCellId) {
+      // Ensure we persist once more before clearing.
+      persistReorderToSwift();
+    }
+    useBlockStore.getState().setIsReordering(false);
+    globalDraggedCellId = null;
+  }, 1000);
+}
+
+/**
+ * Find a cellBlock node by its ID in the document.
+ * Returns the position and node, or null if not found.
+ */
+function findCellBlockById(doc: ProseMirrorNode, cellId: string | null): { pos: number; node: ProseMirrorNode } | null {
+  if (!cellId) return null;
+  let result: { pos: number; node: ProseMirrorNode } | null = null;
+  doc.forEach((node, offset) => {
+    if (node.type.name === 'cellBlock' && node.attrs.id === cellId) {
+      result = { pos: offset, node };
+    }
+  });
+  return result;
+}
 
 // Spinner SVG component for streaming/refreshing states
 function Spinner() {
@@ -59,17 +141,30 @@ function DragHandleIcon() {
  * Controls use contentEditable={false} to not interfere with text selection.
  *
  * Slice 05: Subscribes to store for streaming/refreshing indicators.
+ * Slice 08: Implements drag reorder via drag handle.
  */
-export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
+export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   const { id } = node.attrs;
 
+  // Single "open overlay" state shared across all NodeViews.
+  // This keeps the overlay positioning local (inside `cell-block-wrapper`) while avoiding
+  // parent prop-drilling from `UnifiedStreamEditor`.
+  const overlayCellId = useBlockStore((s) => s.overlayCellId);
+  const openOverlay = useBlockStore((s) => s.openOverlay);
+  const closeOverlay = useBlockStore((s) => s.closeOverlay);
+  const showOverlay = Boolean(id && overlayCellId === id);
+
+  // Canonical cell data from store (attrs can be stale)
+  const cell = useBlockStore((s) => (id ? s.getBlock(id) : undefined));
+
   // IMPORTANT: node.attrs can be stale for dynamic data (type/model/live) because we don't
   // always update node attrs when store changes. Use store as source of truth for UI chrome.
-  const cellType = useBlockStore((s) => (id ? s.getBlock(id)?.type : undefined)) ?? node.attrs.type;
-  const modelId = useBlockStore((s) => (id ? s.getBlock(id)?.modelId : undefined)) ?? node.attrs.modelId;
-  const processingTrigger = useBlockStore((s) => (id ? s.getBlock(id)?.processingConfig?.refreshTrigger : undefined));
+  const cellType = cell?.type ?? node.attrs.type;
+  const modelId = cell?.modelId ?? node.attrs.modelId;
+  const processingTrigger = cell?.processingConfig?.refreshTrigger;
   const isLive = processingTrigger === 'onStreamOpen';
   const hasDependencies = processingTrigger === 'onDependencyChange';
 
@@ -79,6 +174,12 @@ export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
   const isStreaming = useBlockStore((s) => s.isStreaming(id));
   const isRefreshing = useBlockStore((s) => s.isRefreshing(id));
   const showSpinner = isStreaming || isRefreshing;
+
+  const handleScrollToCell = useCallback((cellId: string) => {
+    const el = document.querySelector(`[data-cell-id="${cellId}"]`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, []);
 
   const handleToggleLive = (nextIsLive: boolean) => {
     if (!id) return;
@@ -116,28 +217,229 @@ export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
         blockName: cell.blockName,
         sourceApp: cell.sourceApp,
         modifiers: cell.modifiers,
-        versions: cell.versions,
-        activeVersionId: cell.activeVersionId,
         sourceBinding: cell.sourceBinding,
       },
     });
   };
 
-  const handleInfoClick = () => {
-    // TODO: Implement overlay opening via store or callback
-    if (IS_DEV) {
-      console.log('Info clicked for cell:', id);
+  /**
+   * Overlay "regenerate" handler.
+   *
+   * Mirrors `UnifiedStreamEditor.handleThink` semantics, but takes an explicit prompt string.
+   * This keeps unified mode overlay parity without introducing a fragile NodeView->parent callback.
+   */
+  const handleRegenerate = useCallback((newPrompt: string) => {
+    if (!id) return;
+    const prompt = newPrompt.trim();
+    if (!prompt) return;
+
+    const store = useBlockStore.getState();
+    const cell = store.getBlock(id);
+    if (!cell) return;
+
+    // Preserve images visually while streaming.
+    const images = extractImages(cell.content);
+    const imageBlock = buildImageBlock(images);
+    const currentCellImageURLs = extractImageURLs(cell.content);
+
+    // Prior cells for context (exclude current cell)
+    const cells = store.getBlocksArray();
+    const cellIndex = cells.findIndex((c) => c.id === id);
+    const priorCells = cellIndex > 0 ? cells.slice(0, cellIndex) : [];
+
+    store.startStreaming(id, imageBlock);
+    store.updateBlock(id, {
+      type: 'aiResponse',
+      originalPrompt: prompt,
+      content: imageBlock || '<p></p>',
+    });
+
+    // Persist immediately (this didn't come from typing, so debounced content saves won't fire).
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id,
+        streamId: cell.streamId,
+        content: imageBlock || '<p></p>',
+        type: 'aiResponse',
+        order: cell.order,
+        originalPrompt: prompt,
+        modelId: cell.modelId,
+        processingConfig: cell.processingConfig,
+        references: cell.references,
+        blockName: cell.blockName,
+        sourceApp: cell.sourceApp,
+        modifiers: cell.modifiers,
+        sourceBinding: cell.sourceBinding,
+      },
+    });
+
+    // Swift only understands `think`.
+    bridge.send({
+      type: 'think',
+      payload: {
+        cellId: id,
+        streamId: cell.streamId,
+        currentCell: prompt,
+        imageURLs: currentCellImageURLs,
+        priorCells: priorCells.map((c) => ({
+          content: stripHtml(c.content),
+          type: c.type,
+          imageURLs: extractImageURLs(c.content),
+        })),
+      },
+    });
+
+    closeOverlay();
+  }, [id, closeOverlay]);
+
+  const handleInfoClick = useCallback((e?: ReactMouseEvent) => {
+    e?.preventDefault();
+    e?.stopPropagation();
+    if (!id) return;
+    if (showOverlay) {
+      closeOverlay();
+    } else {
+      openOverlay(id);
     }
-  };
+    if (IS_DEV) console.log('[CellBlockView] Toggle overlay for cell:', id, 'next=', !showOverlay);
+  }, [id, openOverlay, closeOverlay, showOverlay]);
+
+  // === Drag reorder handlers (Slice 08) ===
+
+  const handleDragStart = useCallback((e: React.DragEvent) => {
+    if (!id) return;
+    e.dataTransfer.effectAllowed = 'move';
+
+    // WKWebView/WebKit often requires setData to treat the gesture as a "real" drag.
+    // Legacy `BlockWrapper` does this; without it, drop/dragend can be flaky.
+    try {
+      e.dataTransfer.setData('text/plain', id);
+    } catch {
+      // ignore
+    }
+
+    // Hide the default drag image so it doesn't animate back on release (confusing in live-reorder UX).
+    try {
+      e.dataTransfer.setDragImage(transparentDragImage, 0, 0);
+    } catch {
+      // ignore
+    }
+
+    globalDraggedCellId = id;
+    setIsDragging(true);
+    const store = useBlockStore.getState();
+    store.setIsReordering(true);
+    scheduleIdleCleanup();
+    if (IS_DEV) {
+      console.log('[CellBlockView] Drag start:', id);
+    }
+  }, [id]);
+
+  const handleDragEnd = useCallback(() => {
+    if (IS_DEV) {
+      console.log('[CellBlockView] Drag end, globalDraggedCellId:', globalDraggedCellId);
+    }
+
+    // Fallback persistence: if drop didn't fire (NodeView DOM churn can cause that),
+    // persist on dragend.
+    if (globalDraggedCellId) persistReorderToSwift();
+
+    useBlockStore.getState().setIsReordering(false);
+    globalDraggedCellId = null;
+    setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    // Only handle our block drags, not text drags
+    if (!globalDraggedCellId || globalDraggedCellId === id || !editor) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    // Keep reorder mode "alive" even if the original drag source NodeView is unmounted.
+    useBlockStore.getState().setIsReordering(true);
+    scheduleIdleCleanup();
+
+    // Decide before/after based on pointer Y for better UX.
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const position: 'before' | 'after' = e.clientY < rect.top + rect.height / 2 ? 'before' : 'after';
+
+    // Live reorder as user drags (throttled)
+    const now = Date.now();
+    if (now - lastReorderTime > 100) {
+      lastReorderTime = now;
+
+      const store = useBlockStore.getState();
+      const fromIdx = store.getBlockIndex(globalDraggedCellId);
+      const toIdx = store.getBlockIndex(id);
+
+      if (fromIdx !== -1 && toIdx !== -1 && fromIdx !== toIdx) {
+        // Convert "before/after target" into an insertion index for `reorderBlocks()`.
+        // NOTE: reorderBlocks removes first, then inserts, so we must adjust when moving down.
+        let insertIdx = position === 'before' ? toIdx : toIdx + 1;
+        if (fromIdx < insertIdx) insertIdx -= 1;
+        if (insertIdx === fromIdx) return;
+
+        // Move the node in ProseMirror document
+        const { doc, tr } = editor.state;
+
+        // Find positions of both cells
+        const fromResult = findCellBlockById(doc, globalDraggedCellId);
+        const toResult = findCellBlockById(doc, id);
+
+        if (fromResult && toResult) {
+          const { pos: fromPos, node: fromNode } = fromResult;
+          const { pos: toPos, node: toNode } = toResult;
+
+          // Delete from old position and insert at new position
+          const deleteFrom = fromPos;
+          const deleteTo = fromPos + fromNode.nodeSize;
+
+          const nodeCopy = fromNode;
+          const transaction = tr.delete(deleteFrom, deleteTo);
+
+          // IMPORTANT: `toPos` comes from the pre-delete doc. If we delete a node before `toPos`,
+          // the target position shifts left by fromNode.nodeSize.
+          const adjustedToPos = fromPos < toPos ? toPos - fromNode.nodeSize : toPos;
+          const insertPos = adjustedToPos + (position === 'after' ? toNode.nodeSize : 0);
+
+          transaction.insert(insertPos, nodeCopy);
+          editor.view.dispatch(transaction);
+
+          // Update store order to match
+          store.reorderBlocks(fromIdx, insertIdx);
+          schedulePersistReorder();
+
+          if (IS_DEV) {
+            console.log('[CellBlockView] Reordered:', globalDraggedCellId, 'from', fromIdx, 'to', insertIdx, 'pos', position);
+          }
+        }
+      }
+    }
+  }, [id, editor]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // The actual reorder already happened in handleDragOver.
+    // Persist on drop (more reliable than dragend when DOM nodes are moved during the drag).
+    if (globalDraggedCellId) persistReorderToSwift();
+    useBlockStore.getState().setIsReordering(false);
+    globalDraggedCellId = null;
+    setIsDragging(false);
+  }, []);
 
   return (
     <NodeViewWrapper
-      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''}`}
+      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''} ${isDragging ? 'cell-block-wrapper--dragging' : ''}`}
       data-cell-id={id}
       data-cell-type={cellType}
       data-streaming={showSpinner ? 'true' : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
     >
       {/* Top-right AI metadata badge (model + live toggle) */}
       {isAiBlock && !showSpinner && (
@@ -184,12 +486,15 @@ export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
           </button>
         )}
 
-        {/* Drag handle - TODO: implement drag reorder in later slice */}
+        {/* Drag handle - Slice 08: implements drag reorder */}
         {!showSpinner && (
           <button
-            className="cell-block-drag-handle"
+            className={`cell-block-drag-handle ${isDragging ? 'cell-block-drag-handle--dragging' : ''}`}
             type="button"
             title="Drag to reorder"
+            draggable
+            onDragStart={handleDragStart}
+            onDragEnd={handleDragEnd}
           >
             <DragHandleIcon />
           </button>
@@ -210,6 +515,17 @@ export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
 
       {/* Content area - editable */}
       <NodeViewContent className="cell-block-content" />
+
+      {/* Info overlay - absolute positioned inside the cell wrapper */}
+      {showOverlay && cell && (
+        <CellOverlay
+          cell={cell}
+          onClose={closeOverlay}
+          onScrollToCell={handleScrollToCell}
+          onToggleLive={handleToggleLive}
+          onRegenerate={handleRegenerate}
+        />
+      )}
     </NodeViewWrapper>
   );
 }
