@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, forwardRef, useMemo } from 'react';
 import { Cell, CellType, SourceReference, bridge } from '../types';
+import { useToastStore } from '../store/toastStore';
 
 type Tab = 'outline' | 'sources';
 
@@ -33,6 +34,7 @@ export function SidePanel({
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const sourceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const addToast = useToastStore((state) => state.addToast);
 
   // Filter out empty cells from outline
   const outlineCells = useMemo(() => {
@@ -62,6 +64,8 @@ export function SidePanel({
   const showError = (message: string) => {
     setError(message);
     setTimeout(() => setError(null), 5000);
+    // Surface source errors globally so they're visible even when the panel is collapsed.
+    addToast(message, 'error');
   };
 
   // Drag and drop handlers

@@ -94,7 +94,13 @@ function buildHtmlFromCells(cells: Cell[]): string {
   const sortedCells = [...cells].sort((a, b) => a.order - b.order);
 
   if (sortedCells.length === 0) {
-    return '<div data-cell-block data-cell-id="empty" data-cell-type="text"><p></p></div>';
+    // This path should never be reached - callers must provide at least one UUID-backed cell.
+    // initialCells always includes a bootstrap cell for empty streams.
+    if (IS_DEV) {
+      console.warn('[buildHtmlFromCells] Called with empty cells array - this indicates a bug. Callers should provide a bootstrap cell.');
+    }
+    // Return empty string rather than a non-UUID placeholder that would break persistence.
+    return '';
   }
 
   return sortedCells.map(cellToHtml).join('');

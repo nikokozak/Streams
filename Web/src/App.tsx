@@ -3,6 +3,7 @@ import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
 import { UnifiedStreamEditor } from './components/UnifiedStreamEditor';
 import { Settings } from './components/Settings';
+import { ToastStack } from './components/ToastStack';
 import { useBlockStore } from './store/blockStore';
 import { isUnifiedEditorEnabled } from './utils/featureFlags';
 
@@ -132,17 +133,17 @@ export function App() {
     setView('list');
   };
 
-  if (view === 'settings') {
-    return <Settings onClose={handleCloseSettings} />;
-  }
+  let viewContent: JSX.Element;
 
-  if (view === 'stream' && currentStream) {
+  if (view === 'settings') {
+    viewContent = <Settings onClose={handleCloseSettings} />;
+  } else if (view === 'stream' && currentStream) {
     // Feature flag: use unified editor for cross-cell selection support
     const EditorComponent = isUnifiedEditorEnabled() ? UnifiedStreamEditor : StreamEditor;
 
     // key={currentStream.id} forces React to remount the editor when switching streams.
     // This ensures TipTap reinitializes with the correct content and avoids stale doc state.
-    return (
+    viewContent = (
       <EditorComponent
         key={currentStream.id}
         stream={currentStream}
@@ -155,17 +156,24 @@ export function App() {
         onClearPendingSource={() => setPendingSourceId(null)}
       />
     );
+  } else {
+    viewContent = (
+      <StreamListView
+        streams={streams}
+        isLoading={isLoading}
+        isLoadingStream={isLoadingStream}
+        onSelect={handleSelectStream}
+        onCreate={handleCreateStream}
+        onSettings={handleOpenSettings}
+      />
+    );
   }
 
   return (
-    <StreamListView
-      streams={streams}
-      isLoading={isLoading}
-      isLoadingStream={isLoadingStream}
-      onSelect={handleSelectStream}
-      onCreate={handleCreateStream}
-      onSettings={handleOpenSettings}
-    />
+    <>
+      {viewContent}
+      <ToastStack />
+    </>
   );
 }
 

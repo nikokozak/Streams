@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { SourceReference, Modifier, Cell, bridge } from '../types';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
+import { useToastStore } from '../store/toastStore';
 
 /**
  * EditorAPI - allows useBridgeMessages to update the TipTap document
@@ -51,6 +52,11 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
       // UnifiedStreamEditor updates store on every keystroke; subscribing here would cause
       // this effect to re-run and re-subscribe to the bridge constantly.
       const store = useBlockStore.getState();
+      const toastStore = useToastStore.getState();
+
+      // Normalize unknown error payloads into a user-facing string.
+      const formatError = (value: unknown, fallback: string) =>
+        typeof value === 'string' && value.trim().length > 0 ? value : fallback;
 
       // Source updates
       if (message.type === 'sourceAdded' && message.payload?.source) {
@@ -246,7 +252,8 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'aiError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
+        const error = formatError(message.payload.error, 'AI request failed.');
+        toastStore.addToast(error, 'error');
         store.setError(cellId, error);
         store.completeStreaming(cellId);
       }
@@ -340,7 +347,8 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'modifierError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
+        const error = formatError(message.payload.error, 'Modifier request failed.');
+        toastStore.addToast(`Modifier failed: ${error}`, 'error');
         store.setError(cellId, error);
         store.completeModifying(cellId);
       }
@@ -399,8 +407,9 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'blockRefreshError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = message.payload.error as string;
+        const error = formatError(message.payload.error, 'Refresh failed.');
         console.error('[BlockRefresh] Error:', cellId, error);
+        toastStore.addToast(`Refresh failed: ${error}`, 'error');
         store.setError(cellId, error);
         store.completeRefreshing(cellId);
       }
