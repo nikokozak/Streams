@@ -242,6 +242,17 @@ This model **cannot** support multi-cell selection robustly because selections c
 **Goal**
 - Restore the “cell-based” feel while still allowing rich formatting inside a cell.
 
+**Cell identity invariant (must hold before/while implementing Slice 04)**
+- **Never map cells by doc index.** Index-based mapping is fragile and will break as soon as you insert/delete/reorder.
+- **Every `cellBlock` must carry a canonical UUID** in attrs (e.g. `attrs.id` / `data-cell-id`) that matches the persisted `Cell.id`.
+- **All structural operations must be id-based**:
+  - Create: generate a new UUID, insert a `cellBlock` with that `id`, and add the corresponding block to the store using the same id.
+  - Delete: delete the `cellBlock` by id, delete the store block by id, and persist via `deleteCell` (Slice 04).
+  - Reorder: reorder by moving `cellBlock`s (preserving ids), then update store order based on the new doc order of ids.
+- **Persistence/baseline implications** (for Slice 03+/04):
+  - pending saves + baselines must be keyed by `cellId` (UUID), not positional index
+  - on structural edits, ensure any pending save for a deleted id is dropped/cancelled
+
 **Rules (recommended)**
 - **Enter**
   - If cursor is at end of the current cell *and* you’re in the last block of that cell: create a new `cellBlock` after it.
