@@ -372,6 +372,12 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
         if (cell) {
           store.updateBlock(cellId, { content: htmlContent });
 
+          // Update TipTap document if editorAPI is available (unified editor mode)
+          if (editorAPIRef.current) {
+            console.log('[useBridgeMessages] blockRefreshComplete: updating TipTap document for cell:', cellId);
+            editorAPIRef.current.replaceCellHtml(cellId, htmlContent);
+          }
+
           // Save refreshed content to Swift (preserve all metadata)
           bridge.send({
             type: 'saveCell',
