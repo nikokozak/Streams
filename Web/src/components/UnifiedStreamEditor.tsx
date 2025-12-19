@@ -605,7 +605,8 @@ export function UnifiedStreamEditor({
 
     // Slice 04: Use cell ID from node attrs (UUID), not positional index.
     // This is critical for supporting cell creation/deletion/reorder.
-    for (const extracted of extractedCells) {
+    for (let i = 0; i < extractedCells.length; i++) {
+      const extracted = extractedCells[i];
       const cellId = extracted.id;
       if (!cellId) continue;
 
@@ -627,7 +628,33 @@ export function UnifiedStreamEditor({
           createdAt: now,
           updatedAt: now,
         };
-        addBlock(newCell);
+
+        // Find the previous cell in doc order to insert after.
+        // This keeps store order aligned with the document when cells appear via paste/self-heal.
+        let afterId: string | undefined;
+        for (let j = i - 1; j >= 0; j--) {
+          const prevId = extractedCells[j].id;
+          if (prevId) {
+            afterId = prevId;
+            break;
+          }
+        }
+
+        if (afterId) {
+          // Insert after the previous cell
+          addBlock(newCell, afterId);
+        } else {
+          // No previous cell - this should be at the start of the doc.
+          // Add first (store appends), then move to front to match doc order.
+          addBlock(newCell);
+          const store = useBlockStore.getState();
+          const currentOrder = store.blockOrder;
+          const cellIndex = currentOrder.indexOf(cellId);
+          if (cellIndex > 0) {
+            // Move to front by reordering
+            store.reorderBlocks(cellIndex, 0);
+          }
+        }
         // IMPORTANT: don't seed baseline for doc-created cells.
         // If this cell came from a paste of multiple cellBlocks, we need to persist it
         // (Swift requires UUID ids, and this is a *new* cell in the stream).
