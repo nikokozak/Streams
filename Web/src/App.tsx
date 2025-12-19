@@ -140,8 +140,11 @@ export function App() {
     // Feature flag: use unified editor for cross-cell selection support
     const EditorComponent = isUnifiedEditorEnabled() ? UnifiedStreamEditor : StreamEditor;
 
+    // key={currentStream.id} forces React to remount the editor when switching streams.
+    // This ensures TipTap reinitializes with the correct content and avoids stale doc state.
     return (
       <EditorComponent
+        key={currentStream.id}
         stream={currentStream}
         onBack={handleBackToList}
         onDelete={handleDeleteStream}
