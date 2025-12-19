@@ -99,20 +99,27 @@ cd Web && npm run typecheck
 | `Services/AssetService.swift` | Local image storage in `~/.config/ticker/assets/` |
 | `Services/RetrievalService.swift` | RAG — semantic search over sources |
 | `Services/EmbeddingService.swift` | Local embeddings via MLX |
-| `Models/Cell.swift` | Cell with modifiers, versions, processing config |
+| `Models/Cell.swift` | Cell with modifiers, processing config |
 
 ### Web (`Web/src/`)
 
 | File | Purpose |
 |------|---------|
-| `App.tsx` | Root — stream loading, layout |
-| `components/StreamEditor.tsx` | Main editor surface |
-| `components/BlockWrapper.tsx` | Cell chrome — hover controls, drag handle |
-| `components/CellEditor.tsx` | TipTap editor wrapper |
+| `App.tsx` | Root — stream loading, layout, toast display |
+| `components/UnifiedStreamEditor.tsx` | **Main editor** — single TipTap instance for cross-cell selection |
+| `components/StreamEditor.tsx` | Legacy editor (fallback via Settings or `?unified=false`) |
+| `components/CellOverlay.tsx` | AI cell info overlay — regenerate, model, live toggle |
 | `components/SidePanel.tsx` | Tabbed sidebar — outline + sources |
 | `components/SearchModal.tsx` | Cmd+K hybrid search |
-| `store/blockStore.ts` | Zustand — cells, streaming state, errors |
+| `components/ToastStack.tsx` | Error/info toast notifications |
+| `extensions/CellBlock.ts` | TipTap node — `cellBlock` with `block+` content |
+| `extensions/CellBlockView.tsx` | React NodeView — cell chrome, drag handle, streaming indicator |
+| `extensions/CellKeymap.ts` | Enter/Backspace/Arrow boundary rules |
+| `extensions/CellClipboard.ts` | Cross-cell copy/paste handling |
+| `store/blockStore.ts` | Zustand — cells, streaming state, errors, overlay |
+| `store/toastStore.ts` | Zustand — toast notification state |
 | `hooks/useBridgeMessages.ts` | Handles all bridge messages from Swift |
+| `utils/featureFlags.ts` | Runtime flags (unified editor default ON) |
 | `utils/markdown.ts` | Markdown → sanitized HTML (DOMPurify) |
 | `types/` | TypeScript types and bridge message definitions |
 
@@ -121,10 +128,22 @@ cd Web && npm run typecheck
 - **Stream**: Research session with cells and source references
 - **Cell**: Content block (`text`, `aiResponse`, `quote`)
   - `modifiers`: Transformation chain (e.g., "make shorter")
-  - `versions`: Content snapshots from modifier applications
   - `originalPrompt`: User's input (for AI response cells)
   - `sourceApp`: Origin app name (for quote cells from Quick Panel)
+  - `processingConfig`: Live block settings (refresh triggers)
 - **SourceReference**: Attached file with extracted text, embeddings
+
+## Editor Architecture
+
+The app uses a **unified editor** — a single TipTap instance for the entire stream:
+
+- **Schema**: `doc -> cellBlock+`, where `cellBlock -> block+` (rich content)
+- **Cross-cell selection**: Native ProseMirror selection spans multiple cells
+- **Cell identity**: UUID-based (`data-cell-id` attribute), never positional
+- **Data flow**: TipTap → Store → Persistence (one direction during editing)
+- **External updates** (AI complete, Quick Panel): Write TO TipTap, then normal flow resumes
+
+Legacy editor remains available via Settings toggle or `?unified=false` URL param.
 
 ## Quick Panel
 
@@ -147,32 +166,6 @@ Global capture panel accessible via **Cmd+L** from any app. Captures selected te
 - Default: Most recently modified stream
 - After 15min idle: Show stream picker
 - No streams: Create "Untitled"
-
-## Current Work: Single-Editor Refactor
-
-**Branch:** `feature/single-editor-refactor`
-**Goal:** Enable true cross-cell text selection (click-drag to highlight text across cell boundaries)
-
-**Why this is needed:**
-The current architecture has N separate TipTap editor instances (one per cell). Browser/ProseMirror selection cannot span multiple contenteditable elements. To support text selection across cells, we need ONE editor instance with cells as nodes within a single document.
-
-**Key constraints (from GPT-5.2):**
-- Schema: `doc -> cellBlock+`, where `cellBlock -> block+` (rich content, not inline-only)
-- Provenance via attributes (`groupId`, `groupRole`), not structural nesting
-- TipTap as source of truth during editing
-- Cells can contain rich block content (headings, lists, code) without forcing splits
-
-**Guiding document:** `IMPLEMENTATION_TASKS_UNIFIED_STREAM_EDITOR_BLOCK_PLUS.md`
-
-**Previous attempt failed because:**
-1. Made cellBlock inline-only, forcing AI response splits
-2. Fought reconciliation battles between store and TipTap
-3. Scope was too large without proper planning
-
-**This attempt will:**
-1. Have a detailed plan from GPT-5.2 before any code
-2. Work in small, verified increments
-3. Cross-check every step
 
 ## Code Standards
 
