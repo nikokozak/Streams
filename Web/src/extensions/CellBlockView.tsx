@@ -150,6 +150,43 @@ function Spinner() {
   );
 }
 
+// Static pseudo-text for "thinking" animation (avoid randomness that changes every render)
+const THINKING_PSEUDO_TEXT = [
+  'Analyzing the context and formulating a response...',
+  'Processing your request with care and attention...',
+  'Considering multiple perspectives on this topic...',
+  'Gathering relevant information to provide insight...',
+  'Synthesizing ideas to craft a thoughtful reply...',
+  'Examining the nuances of your question...',
+  'Building upon the conversation context...',
+  'Working through the reasoning step by step...',
+];
+
+/**
+ * ThinkingWindow - blurred scrolling pseudo-text overlay during AI streaming.
+ * Respects prefers-reduced-motion with a simple fallback.
+ */
+function ThinkingWindow() {
+  return (
+    <div className="thinking-window" contentEditable={false} aria-hidden="true">
+      {/* Animated version - hidden for reduced motion */}
+      <div className="thinking-window-scroll" aria-hidden="true">
+        {/* Repeat text twice for seamless loop */}
+        {[...THINKING_PSEUDO_TEXT, ...THINKING_PSEUDO_TEXT].map((text, i) => (
+          <p key={i} className="thinking-window-line">{text}</p>
+        ))}
+      </div>
+      {/* Reduced motion fallback */}
+      <div className="thinking-window-fallback">
+        <span>Thinking</span>
+        <span className="thinking-dots">
+          <span>.</span><span>.</span><span>.</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 // Info icon SVG component (copied from BlockWrapper)
 function InfoIcon() {
   return (
@@ -580,6 +617,9 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
           </span>
         )}
       </div>
+
+      {/* Thinking window overlay - shown during streaming/refreshing */}
+      {showSpinner && <ThinkingWindow />}
 
       {/* Content area - editable */}
       <NodeViewContent className="cell-block-content" />
