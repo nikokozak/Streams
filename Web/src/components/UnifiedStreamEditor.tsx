@@ -18,6 +18,32 @@ interface UnifiedStreamEditorProps {
   onClearPendingSource?: () => void;
 }
 
+const IS_DEV = Boolean((import.meta as any).env?.DEV);
+
+/**
+ * Escape a string so it is safe to embed inside a double-quoted HTML attribute value.
+ * NOTE: We're building HTML strings for TipTap initialization, so *any* unescaped quotes
+ * or angle brackets in metadata can break parsing (or worse).
+ */
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * Escape plain text for safe inclusion inside HTML (e.g., when wrapping plain text in <p>).
+ */
+function escapeHtmlText(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 /**
  * Convert a cell to an HTML string wrapped in a cellBlock element.
  * The cellBlock attributes are stored as data-* attributes.
@@ -29,10 +55,10 @@ function cellToHtml(cell: Cell): string {
     `data-cell-type="${cell.type}"`,
   ];
 
-  if (cell.modelId) attrs.push(`data-model-id="${cell.modelId}"`);
-  if (cell.originalPrompt) attrs.push(`data-original-prompt="${encodeURIComponent(cell.originalPrompt)}"`);
-  if (cell.sourceApp) attrs.push(`data-source-app="${cell.sourceApp}"`);
-  if (cell.blockName) attrs.push(`data-block-name="${cell.blockName}"`);
+  if (cell.modelId) attrs.push(`data-model-id="${escapeHtmlAttribute(cell.modelId)}"`);
+  if (cell.originalPrompt) attrs.push(`data-original-prompt="${escapeHtmlAttribute(cell.originalPrompt)}"`);
+  if (cell.sourceApp) attrs.push(`data-source-app="${escapeHtmlAttribute(cell.sourceApp)}"`);
+  if (cell.blockName) attrs.push(`data-block-name="${escapeHtmlAttribute(cell.blockName)}"`);
   if (cell.processingConfig?.refreshTrigger === 'onStreamOpen') attrs.push('data-is-live="true"');
   if (cell.processingConfig?.refreshTrigger === 'onDependencyChange') attrs.push('data-has-dependencies="true"');
 
@@ -40,9 +66,9 @@ function cellToHtml(cell: Cell): string {
   let content = cell.content || '';
   if (!content.trim()) {
     content = '<p></p>';
-  } else if (!content.startsWith('<')) {
+  } else if (!content.trimStart().startsWith('<')) {
     // Wrap plain text in paragraph
-    content = `<p>${content}</p>`;
+    content = `<p>${escapeHtmlText(content)}</p>`;
   }
 
   return `<div ${attrs.join(' ')}>${content}</div>`;
@@ -142,18 +168,20 @@ export function UnifiedStreamEditor({
             <div className="loading-state">Loading editor...</div>
           )}
 
-          {/* Debug info */}
-          <div style={{
-            marginTop: '20px',
-            padding: '10px',
-            background: 'var(--color-surface)',
-            borderRadius: '4px',
-            fontSize: '12px',
-            color: 'var(--color-text-secondary)',
-          }}>
-            <strong>Debug:</strong> {stream.cells.length} cells loaded.
-            Drag-select across cells to test cross-cell selection.
-          </div>
+          {IS_DEV ? (
+            <div
+              style={{
+                marginTop: '20px',
+                padding: '10px',
+                background: 'var(--color-surface)',
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              <strong>Debug:</strong> {stream.cells.length} cells loaded. Drag-select across cells to test cross-cell selection.
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

@@ -3,12 +3,12 @@ import { ReactNodeViewRenderer } from '@tiptap/react';
 import { CellBlockView } from './CellBlockView';
 
 export interface CellBlockAttrs {
-  id: string;
+  id: string | null;
   type: 'text' | 'aiResponse' | 'quote';
-  modelId?: string;
-  originalPrompt?: string;
-  sourceApp?: string;
-  blockName?: string;
+  modelId?: string | null;
+  originalPrompt?: string | null;
+  sourceApp?: string | null;
+  blockName?: string | null;
   isLive?: boolean;
   hasDependencies?: boolean;
 }

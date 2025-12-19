@@ -2,6 +2,8 @@ import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import { NodeViewProps } from '@tiptap/core';
 import { useState } from 'react';
 
+const IS_DEV = Boolean((import.meta as any).env?.DEV);
+
 // Info icon SVG component (copied from BlockWrapper)
 function InfoIcon() {
   return (
@@ -43,7 +45,9 @@ export function CellBlockView({ node }: NodeViewProps) {
 
   const handleInfoClick = () => {
     // TODO: Implement overlay opening via store or callback
-    console.log('Info clicked for cell:', id);
+    if (IS_DEV) {
+      console.log('Info clicked for cell:', id);
+    }
   };
 
   return (
@@ -63,6 +67,7 @@ export function CellBlockView({ node }: NodeViewProps) {
         {isAiBlock && (
           <button
             className="cell-block-info-button"
+            type="button"
             onClick={handleInfoClick}
             title="View details"
           >
@@ -73,6 +78,7 @@ export function CellBlockView({ node }: NodeViewProps) {
         {/* Drag handle - TODO: implement drag reorder in later slice */}
         <button
           className="cell-block-drag-handle"
+          type="button"
           title="Drag to reorder"
         >
           <DragHandleIcon />
