@@ -209,8 +209,6 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
           order: cell.order,
           originalPrompt: cell.originalPrompt,
           modifiers: cell.modifiers,
-          versions: cell.versions,
-          activeVersionId: cell.activeVersionId,
           sourceApp: cell.sourceApp,
           references: cell.references,
         },
@@ -398,37 +396,6 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
   const handleCloseOverlay = useCallback(() => {
     setOverlayBlockId(null);
   }, []);
-
-  // Select a version for a cell (used from overlay)
-  const handleSelectVersion = useCallback((cellId: string, versionId: string) => {
-    const cell = store.getBlock(cellId);
-    if (!cell || !cell.versions) return;
-
-    const version = cell.versions.find(v => v.id === versionId);
-    if (!version) return;
-
-    store.updateBlock(cellId, {
-      content: version.content,
-      activeVersionId: versionId,
-    });
-
-    // Save to Swift (preserve sourceApp and references)
-    bridge.send({
-      type: 'saveCell',
-      payload: {
-        id: cellId,
-        streamId: stream.id,
-        content: version.content,
-        type: cell.type,
-        order: cell.order,
-        modifiers: cell.modifiers,
-        versions: cell.versions,
-        activeVersionId: versionId,
-        sourceApp: cell.sourceApp,
-        references: cell.references,
-      },
-    });
-  }, [stream.id, store]);
 
   // Toggle live status for a cell
   const handleToggleLive = useCallback((cellId: string, isLive: boolean) => {
@@ -643,7 +610,6 @@ export function StreamEditor({ stream, onBack, onDelete, onNavigateToStream, pen
                   <CellOverlay
                     cell={cell}
                     onClose={handleCloseOverlay}
-                    onSelectVersion={(versionId) => handleSelectVersion(cell.id, versionId)}
                     onScrollToCell={handleScrollToCell}
                     onToggleLive={(isLive) => handleToggleLive(cell.id, isLive)}
                     onRegenerate={(newPrompt) => handleRegenerate(cell.id, newPrompt)}

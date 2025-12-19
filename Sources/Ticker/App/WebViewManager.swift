@@ -555,11 +555,31 @@ final class WebViewManager: NSObject {
                 return
             }
             do {
+                // WebKit/JS numbers often arrive as Double (even if they look like integers in JS).
+                // Be permissive here so reorder actually persists.
                 let orders = ordersRaw.compactMap { dict -> (UUID, Int)? in
                     guard let idStr = dict["id"] as? String,
                           let id = UUID(uuidString: idStr),
-                          let order = dict["order"] as? Int else { return nil }
+                          let orderAny = dict["order"] else { return nil }
+
+                    let order: Int?
+                    if let o = orderAny as? Int {
+                        order = o
+                    } else if let o = orderAny as? Double {
+                        order = Int(o)
+                    } else if let o = orderAny as? NSNumber {
+                        order = o.intValue
+                    } else {
+                        order = nil
+                    }
+
+                    guard let order else { return nil }
                     return (id, order)
+                }
+                if orders.isEmpty {
+                    print("reorderBlocks payload had orders=[], skipping persistence")
+                    bridgeService.send(BridgeMessage(type: "blocksReordered", payload: [:]))
+                    return
                 }
                 try persistence.updateCellOrders(orders, streamId: streamId)
                 bridgeService.send(BridgeMessage(type: "blocksReordered", payload: [:]))
@@ -1001,7 +1021,9 @@ final class WebViewManager: NSObject {
             let limit = payload["limit"]?.value as? Int ?? 20
 
             guard let searchService = searchService else {
-                bridgeService.respondWithError(to: callbackId, error: "Search service not available")
+                Task { @MainActor in
+                    bridgeService.respondWithError(to: callbackId, error: "Search service not available")
+                }
                 return
             }
 
@@ -1018,12 +1040,16 @@ final class WebViewManager: NSObject {
                     let data = try encoder.encode(results)
                     let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
 
-                    bridgeService.respond(to: callbackId, with: [
-                        "currentStreamResults": AnyCodable(json["currentStreamResults"]),
-                        "otherStreamResults": AnyCodable(json["otherStreamResults"])
-                    ])
+                    await MainActor.run {
+                        bridgeService.respond(to: callbackId, with: [
+                            "currentStreamResults": AnyCodable(json["currentStreamResults"]),
+                            "otherStreamResults": AnyCodable(json["otherStreamResults"])
+                        ])
+                    }
                 } catch {
-                    bridgeService.respondWithError(to: callbackId, error: error.localizedDescription)
+                    await MainActor.run {
+                        bridgeService.respondWithError(to: callbackId, error: error.localizedDescription)
+                    }
                 }
             }
 

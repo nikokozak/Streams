@@ -34,10 +34,6 @@ export interface Cell {
   updatedAt: string;
   /** Modifier chain - prompts that have been applied to transform content */
   modifiers?: Modifier[];
-  /** Content versions - each modifier produces a new version */
-  versions?: CellVersion[];
-  /** Currently displayed version (if not set, show latest) */
-  activeVersionId?: string;
   /** Processing configuration for automatic behavior (@live, schema validation, etc.) */
   processingConfig?: ProcessingConfig;
   /** IDs of blocks this block references (for dependency tracking) */
@@ -58,14 +54,6 @@ export interface Modifier {
   id: string;
   prompt: string;      // Full prompt text ("make it shorter")
   label: string;       // AI-generated 1-3 word summary ("shorter")
-  createdAt: string;
-}
-
-/** A version of content produced by the modifier chain */
-export interface CellVersion {
-  id: string;
-  content: string;     // HTML content for this version
-  modifierIds: string[]; // Which modifiers produced this
   createdAt: string;
 }
 

@@ -357,8 +357,6 @@ export function UnifiedStreamEditor({
           blockName: cell.blockName,
           processingConfig: cell.processingConfig,
           modifiers: cell.modifiers,
-          versions: cell.versions,
-          activeVersionId: cell.activeVersionId,
           sourceBinding: cell.sourceBinding,
         },
       });
@@ -579,6 +577,7 @@ export function UnifiedStreamEditor({
   // Handle editor updates - extract cells and sync to store, then schedule save
   const handleUpdate = useCallback(({ editor }: { editor: Editor }) => {
     const extractedCells = extractCellsFromDoc(editor);
+    const isReordering = useBlockStore.getState().isReordering;
 
     if (IS_DEV) {
       console.log('[UnifiedStreamEditor] onUpdate: extracted', extractedCells.length, 'cells');
@@ -639,6 +638,27 @@ export function UnifiedStreamEditor({
 
       const nextContent = extracted.content ?? existingBlock.content;
       const nextOrder = extracted.order ?? existingBlock.order;
+
+      // During drag-reorder we *do not* want to schedule per-cell save storms.
+      // Swift persistence is handled via the dedicated `reorderBlocks` message.
+      //
+      // However, we DO want baseline.order to track doc order so the next real edit
+      // doesn't look like an order change and trigger redundant saves.
+      if (isReordering) {
+        const baselineEntry = baselineRef.current.get(cellId);
+        baselineRef.current.set(cellId, {
+          content: baselineEntry?.content ?? nextContent,
+          order: nextOrder,
+        });
+
+        // Keep store content in sync if it somehow changed (shouldn't during reorder).
+        if (existingBlock.content !== nextContent) {
+          pendingSavesRef.current.set(cellId, { content: nextContent, order: nextOrder });
+          hasChanges = true;
+          updateBlock(cellId, { content: nextContent });
+        }
+        continue;
+      }
 
       // Track pending edits against baseline (not store) so we don't miss scheduling saves.
       const baselineEntry = baselineRef.current.get(cellId);
@@ -838,8 +858,6 @@ export function UnifiedStreamEditor({
         blockName: cell.blockName,
         processingConfig: cell.processingConfig,
         modifiers: cell.modifiers,
-        versions: cell.versions,
-        activeVersionId: cell.activeVersionId,
         createdAt: cell.createdAt || new Date().toISOString(),
         updatedAt: cell.updatedAt || new Date().toISOString(),
       });

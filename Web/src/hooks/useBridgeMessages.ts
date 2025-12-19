@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { SourceReference, Modifier, CellVersion, Cell, bridge } from '../types';
+import { SourceReference, Modifier, Cell, bridge } from '../types';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 
@@ -303,39 +303,15 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
         const rawContent = modifyingData.content;
         const htmlContent = markdownToHtml(rawContent);
 
-        // Create new version with the modified content
-        const newVersionId = crypto.randomUUID();
-        const newVersion: CellVersion = {
-          id: newVersionId,
-          content: htmlContent,
-          modifierIds: [modifierId],
-          createdAt: new Date().toISOString(),
-        };
-
         const cell = store.getBlock(cellId);
         if (!cell) {
           store.completeModifying(cellId);
           return;
         }
 
-        // Get existing versions or create initial version from current content
-        let existingVersions = cell.versions || [];
-        if (existingVersions.length === 0 && cell.content) {
-          existingVersions = [{
-            id: crypto.randomUUID(),
-            content: cell.content,
-            modifierIds: [],
-            createdAt: cell.createdAt,
-          }];
-        }
-
-        const updatedVersions = [...existingVersions, newVersion];
-
         // Update block
         store.updateBlock(cellId, {
           content: htmlContent,
-          versions: updatedVersions,
-          activeVersionId: newVersionId,
         });
 
         // Save to Swift (preserve sourceApp and references)
@@ -348,8 +324,6 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
             type: cell.type,
             order: cell.order,
             modifiers: cell.modifiers,
-            versions: updatedVersions,
-            activeVersionId: newVersionId,
             sourceApp: cell.sourceApp,
             references: cell.references,
           },
