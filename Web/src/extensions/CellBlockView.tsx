@@ -1,7 +1,7 @@
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import { NodeViewProps } from '@tiptap/core';
 import { Node as ProseMirrorNode } from '@tiptap/pm/model';
-import { useState, useCallback, type MouseEvent as ReactMouseEvent } from 'react';
+import { useState, useCallback, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { useBlockStore } from '../store/blockStore';
 import { bridge } from '../types';
 import { CellOverlay } from '../components/CellOverlay';
@@ -14,6 +14,9 @@ let globalDraggedCellId: string | null = null;
 let lastReorderTime = 0;
 let persistReorderTimeout: number | null = null;
 let idleCleanupTimeout: number | null = null;
+let autoscrollRAF: number | null = null;
+let lastPointerY = 0;
+const DRAG_CLEANUP_EVENT = 'ticker:cell-drag-cleanup';
 
 // 1x1 transparent gif (prevents the browser drag image from "snapping back" visually)
 const TRANSPARENT_DRAG_IMG_SRC =
@@ -68,9 +71,49 @@ function scheduleIdleCleanup() {
       // Ensure we persist once more before clearing.
       persistReorderToSwift();
     }
-    useBlockStore.getState().setIsReordering(false);
-    globalDraggedCellId = null;
+    cleanupDragState();
   }, 1000);
+}
+
+/** Start autoscroll loop that scrolls viewport when pointer is near edges. */
+function startAutoscroll() {
+  if (autoscrollRAF !== null) return;
+
+  const EDGE_THRESHOLD = 80; // px from edge to start scrolling
+  const SCROLL_SPEED = 8; // px per frame
+
+  function tick() {
+    const viewportHeight = window.innerHeight;
+    if (lastPointerY < EDGE_THRESHOLD) {
+      // Near top - scroll up
+      window.scrollBy(0, -SCROLL_SPEED);
+    } else if (lastPointerY > viewportHeight - EDGE_THRESHOLD) {
+      // Near bottom - scroll down
+      window.scrollBy(0, SCROLL_SPEED);
+    }
+    autoscrollRAF = requestAnimationFrame(tick);
+  }
+
+  autoscrollRAF = requestAnimationFrame(tick);
+}
+
+/** Stop autoscroll loop. */
+function stopAutoscroll() {
+  if (autoscrollRAF !== null) {
+    cancelAnimationFrame(autoscrollRAF);
+    autoscrollRAF = null;
+  }
+}
+
+/** Clean up all drag-related state. */
+function cleanupDragState() {
+  document.body.classList.remove('is-cell-dragging');
+  useBlockStore.getState().setIsReordering(false);
+  globalDraggedCellId = null;
+  stopAutoscroll();
+  // NodeViews can be unmounted/re-rendered during live reorder. Drag terminal events are not reliable.
+  // Broadcast a cleanup signal so any mounted CellBlockView can clear its local UI flags.
+  window.dispatchEvent(new Event(DRAG_CLEANUP_EVENT));
 }
 
 /**
@@ -146,6 +189,7 @@ function DragHandleIcon() {
 export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDragTarget, setIsDragTarget] = useState(false);
 
   const { id } = node.attrs;
 
@@ -310,6 +354,7 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
   const handleDragStart = useCallback((e: React.DragEvent) => {
     if (!id) return;
     e.dataTransfer.effectAllowed = 'move';
+    lastPointerY = e.clientY;
 
     // WKWebView/WebKit often requires setData to treat the gesture as a "real" drag.
     // Legacy `BlockWrapper` does this; without it, drop/dragend can be flaky.
@@ -328,8 +373,10 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
 
     globalDraggedCellId = id;
     setIsDragging(true);
+    document.body.classList.add('is-cell-dragging');
     const store = useBlockStore.getState();
     store.setIsReordering(true);
+    startAutoscroll();
     scheduleIdleCleanup();
     if (IS_DEV) {
       console.log('[CellBlockView] Drag start:', id);
@@ -345,8 +392,7 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
     // persist on dragend.
     if (globalDraggedCellId) persistReorderToSwift();
 
-    useBlockStore.getState().setIsReordering(false);
-    globalDraggedCellId = null;
+    cleanupDragState();
     setIsDragging(false);
   }, []);
 
@@ -357,6 +403,13 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
+
+    // Track pointer Y for autoscroll
+    lastPointerY = e.clientY;
+
+    // Track current drag target for highlight
+    setIsDragTarget(true);
+
     // Keep reorder mode "alive" even if the original drag source NodeView is unmounted.
     useBlockStore.getState().setIsReordering(true);
     scheduleIdleCleanup();
@@ -425,20 +478,35 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
     // The actual reorder already happened in handleDragOver.
     // Persist on drop (more reliable than dragend when DOM nodes are moved during the drag).
     if (globalDraggedCellId) persistReorderToSwift();
-    useBlockStore.getState().setIsReordering(false);
-    globalDraggedCellId = null;
+    cleanupDragState();
     setIsDragging(false);
+    setIsDragTarget(false);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragTarget(false);
+  }, []);
+
+  useEffect(() => {
+    // Keep local UI state from getting "stuck" if drag terminal events are lost.
+    const handleCleanup = () => {
+      setIsDragging(false);
+      setIsDragTarget(false);
+    };
+    window.addEventListener(DRAG_CLEANUP_EVENT, handleCleanup);
+    return () => window.removeEventListener(DRAG_CLEANUP_EVENT, handleCleanup);
   }, []);
 
   return (
     <NodeViewWrapper
-      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''} ${isDragging ? 'cell-block-wrapper--dragging' : ''}`}
+      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''} ${isDragging ? 'cell-block-wrapper--dragging' : ''} ${isDragTarget ? 'cell-block-wrapper--drag-target' : ''}`}
       data-cell-id={id}
       data-cell-type={cellType}
       data-streaming={showSpinner ? 'true' : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
       onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
       {/* Top-right AI metadata badge (model + live toggle) */}

@@ -2521,6 +2521,25 @@ body {
   margin: var(--spacing-xs) 0;
 }
 
+/* Drag reorder polish */
+.is-cell-dragging {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+.is-cell-dragging * {
+  cursor: grabbing !important;
+}
+
+.cell-block-wrapper--drag-target {
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.cell-block-wrapper--dragging {
+  opacity: 0.5;
+}
+
 /* ==================== Toasts ==================== */
 
 .toast-stack {
