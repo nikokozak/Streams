@@ -827,8 +827,9 @@ export function UnifiedStreamEditor({
     // Prevent redundant "save storm" after AI completes.
     // useBridgeMessages already persisted the final content; by updating baseline here,
     // we avoid unified persistence re-saving the same content again.
+    // IMPORTANT: Use safeHtml (normalized) to avoid "empty vs <p></p>" baseline mismatches.
     const order = useBlockStore.getState().getBlock(cellId)?.order ?? 0;
-    baselineRef.current.set(cellId, { content: html, order });
+    baselineRef.current.set(cellId, { content: safeHtml, order });
     pendingSavesRef.current.delete(cellId);
 
     if (IS_DEV) {
