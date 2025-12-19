@@ -1,8 +1,28 @@
 import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import { NodeViewProps } from '@tiptap/core';
 import { useState } from 'react';
+import { useBlockStore } from '../store/blockStore';
 
 const IS_DEV = Boolean((import.meta as any).env?.DEV);
+
+// Spinner SVG component for streaming/refreshing states
+function Spinner() {
+  return (
+    <svg
+      className="cell-block-spinner"
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+    </svg>
+  );
+}
 
 // Info icon SVG component (copied from BlockWrapper)
 function InfoIcon() {
@@ -36,12 +56,19 @@ function DragHandleIcon() {
  * with NodeViewContent for the editable content area.
  *
  * Controls use contentEditable={false} to not interfere with text selection.
+ *
+ * Slice 05: Subscribes to store for streaming/refreshing indicators.
  */
 export function CellBlockView({ node }: NodeViewProps) {
   const [isHovered, setIsHovered] = useState(false);
 
   const { id, type, isLive, hasDependencies } = node.attrs;
   const isAiBlock = type === 'aiResponse';
+
+  // Subscribe to streaming/refreshing state for this cell
+  const isStreaming = useBlockStore((s) => s.isStreaming(id));
+  const isRefreshing = useBlockStore((s) => s.isRefreshing(id));
+  const showSpinner = isStreaming || isRefreshing;
 
   const handleInfoClick = () => {
     // TODO: Implement overlay opening via store or callback
@@ -52,19 +79,27 @@ export function CellBlockView({ node }: NodeViewProps) {
 
   return (
     <NodeViewWrapper
-      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''}`}
+      className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''}`}
       data-cell-id={id}
       data-cell-type={type}
+      data-streaming={showSpinner ? 'true' : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
       {/* Controls - left side, non-editable */}
       <div
-        className={`cell-block-controls ${isHovered ? 'cell-block-controls--visible' : ''}`}
+        className={`cell-block-controls ${isHovered || showSpinner ? 'cell-block-controls--visible' : ''}`}
         contentEditable={false}
       >
-        {/* Info button - only for AI cells */}
-        {isAiBlock && (
+        {/* Streaming/refreshing spinner */}
+        {showSpinner && (
+          <span className="cell-block-indicator cell-block-indicator--streaming" title={isStreaming ? 'AI is thinking...' : 'Refreshing...'}>
+            <Spinner />
+          </span>
+        )}
+
+        {/* Info button - only for AI cells when not streaming */}
+        {isAiBlock && !showSpinner && (
           <button
             className="cell-block-info-button"
             type="button"
@@ -76,21 +111,23 @@ export function CellBlockView({ node }: NodeViewProps) {
         )}
 
         {/* Drag handle - TODO: implement drag reorder in later slice */}
-        <button
-          className="cell-block-drag-handle"
-          type="button"
-          title="Drag to reorder"
-        >
-          <DragHandleIcon />
-        </button>
+        {!showSpinner && (
+          <button
+            className="cell-block-drag-handle"
+            type="button"
+            title="Drag to reorder"
+          >
+            <DragHandleIcon />
+          </button>
+        )}
 
         {/* Block type indicators */}
-        {isLive && (
+        {isLive && !showSpinner && (
           <span className="cell-block-indicator cell-block-indicator--live" title="Live block (refreshes on open)">
             ⚡
           </span>
         )}
-        {hasDependencies && (
+        {hasDependencies && !showSpinner && (
           <span className="cell-block-indicator cell-block-indicator--dependent" title="Updates when dependencies change">
             🔗
           </span>

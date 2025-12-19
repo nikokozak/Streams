@@ -490,6 +490,7 @@ body {
 .stream-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xxl) var(--spacing-xxl);
 }
 
@@ -2544,6 +2545,31 @@ body {
 
 .cell-block-indicator--dependent {
   color: var(--color-text-secondary);
+}
+
+.cell-block-indicator--streaming {
+  display: flex;
+  align-items: center;
+  color: var(--color-accent);
+}
+
+.cell-block-spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Streaming state - show subtle background */
+.cell-block-wrapper--streaming {
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
 }
 
 /* Cell Block Content - the editable area */

@@ -3,14 +3,18 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Mention from '@tiptap/extension-mention';
 import Document from '@tiptap/extension-document';
-import { useMemo, useEffect, useCallback, useRef } from 'react';
+import { useMemo, useEffect, useCallback, useRef, useState } from 'react';
 import { Stream, Cell, bridge } from '../types';
 import { CellBlock } from '../extensions/CellBlock';
 import { CellClipboard } from '../extensions/CellClipboard';
 import { CellKeymap, CellKeymapCallbacks } from '../extensions/CellKeymap';
+import { SidePanel } from './SidePanel';
 import { useBlockStore } from '../store/blockStore';
 import { Editor } from '@tiptap/core';
-import { DOMSerializer } from '@tiptap/pm/model';
+import { DOMSerializer, DOMParser, Node as ProseMirrorNode } from '@tiptap/pm/model';
+import { Selection } from '@tiptap/pm/state';
+import { stripHtml, extractImages, buildImageBlock, extractImageURLs } from '../utils/html';
+import { useBridgeMessages, EditorAPI } from '../hooks/useBridgeMessages';
 
 /** Save debounce delay in ms - matches Cell component */
 const SAVE_DEBOUNCE_MS = 500;
@@ -163,6 +167,20 @@ function extractCellsFromDoc(editor: Editor): Partial<Cell>[] {
   return cells;
 }
 
+/**
+ * Find a cellBlock by its ID in the document.
+ * Returns the position and node, or null if not found.
+ */
+function findCellBlockById(doc: ProseMirrorNode, cellId: string): { pos: number; node: ProseMirrorNode } | null {
+  let result: { pos: number; node: ProseMirrorNode } | null = null;
+  doc.forEach((node, offset) => {
+    if (node.type.name === 'cellBlock' && node.attrs.id === cellId) {
+      result = { pos: offset, node };
+    }
+  });
+  return result;
+}
+
 // Custom document that only allows cellBlocks at the top level
 const CustomDocument = Document.extend({
   content: 'cellBlock+',
@@ -187,6 +205,7 @@ const CustomDocument = Document.extend({
 export function UnifiedStreamEditor({
   stream,
   onBack,
+  onDelete,
 }: UnifiedStreamEditorProps) {
   // Subscribe to only the stable actions we need.
   // Avoid subscribing to the entire store state object: on every keystroke we call updateBlock,
@@ -196,7 +215,16 @@ export function UnifiedStreamEditor({
   const updateBlock = useBlockStore((s) => s.updateBlock);
   const addBlock = useBlockStore((s) => s.addBlock);
   const deleteBlock = useBlockStore((s) => s.deleteBlock);
+  const startStreaming = useBlockStore((s) => s.startStreaming);
+  const setFocus = useBlockStore((s) => s.setFocus);
   const cellCount = useBlockStore((s) => s.blockOrder.length);
+  const lastFocusedCellIdRef = useRef<string | null>(null);
+
+  // Stream-level UI state (parity with StreamEditor)
+  const [title, setTitle] = useState(stream.title);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Track if we've initialized the store for this stream
   const initializedStreamId = useRef<string | null>(null);
@@ -233,6 +261,39 @@ export function UnifiedStreamEditor({
   useEffect(() => {
     streamIdRef.current = stream.id;
   }, [stream.id]);
+
+  // Keep local title state in sync on stream switches
+  useEffect(() => {
+    setTitle(stream.title);
+    setIsEditingTitle(false);
+    setShowDeleteConfirm(false);
+  }, [stream.id, stream.title]);
+
+  // Title editing handlers (same behavior as StreamEditor)
+  const startEditingTitle = useCallback(() => {
+    setIsEditingTitle(true);
+    setTimeout(() => titleInputRef.current?.select(), 0);
+  }, []);
+
+  const saveTitle = useCallback(() => {
+    const trimmedTitle = title.trim() || 'Untitled';
+    setTitle(trimmedTitle);
+    setIsEditingTitle(false);
+    bridge.send({
+      type: 'updateStreamTitle',
+      payload: { id: stream.id, title: trimmedTitle },
+    });
+  }, [title, stream.id]);
+
+  const handleTitleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      saveTitle();
+    } else if (e.key === 'Escape') {
+      setTitle(stream.title);
+      setIsEditingTitle(false);
+    }
+  }, [saveTitle, stream.title]);
 
   /**
    * Save pending edited cells (debounced).
@@ -422,12 +483,87 @@ export function UnifiedStreamEditor({
   }, [deleteBlock]);
 
   /**
+   * Trigger AI thinking for a cell.
+   * Called by CellKeymap when Cmd+Enter is pressed.
+   */
+  const handleThink = useCallback((cellId: string) => {
+    const cell = getBlock(cellId);
+    if (!cell) return;
+
+    const originalPrompt = stripHtml(cell.content || '').trim();
+    if (!originalPrompt) {
+      if (IS_DEV) {
+        console.log('[UnifiedStreamEditor] handleThink: empty prompt, skipping');
+      }
+      return;
+    }
+
+    // Extract images from cell content - will be preserved visually
+    const images = extractImages(cell.content);
+    const imageBlock = buildImageBlock(images);
+    const currentCellImageURLs = extractImageURLs(cell.content);
+
+    // Get prior cells for context
+    const store = useBlockStore.getState();
+    const cells = store.getBlocksArray();
+    const cellIndex = cells.findIndex(c => c.id === cellId);
+    const priorCells = cellIndex > 0 ? cells.slice(0, cellIndex) : [];
+
+    // Mark cell as streaming in store
+    startStreaming(cellId, imageBlock);
+
+    // Transform cell into AI response type
+    updateBlock(cellId, {
+      type: 'aiResponse',
+      originalPrompt,
+      content: imageBlock || '<p></p>',
+    });
+
+    // Persist the type transition immediately (matches legacy StreamEditor behavior).
+    // This ensures we don't lose the prompt/type if the app quits mid-stream.
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id: cellId,
+        streamId: stream.id,
+        content: imageBlock || '<p></p>',
+        type: 'aiResponse',
+        originalPrompt,
+        order: cell.order,
+        sourceApp: cell.sourceApp,
+        references: cell.references,
+      },
+    });
+
+    if (IS_DEV) {
+      console.log('[UnifiedStreamEditor] handleThink: dispatching AI request for cell:', cellId);
+    }
+
+    // Dispatch think request to Swift (Swift only understands "think").
+    bridge.send({
+      type: 'think',
+      payload: {
+        cellId,
+        streamId: stream.id,
+        currentCell: originalPrompt,
+        imageURLs: currentCellImageURLs,
+        priorCells: priorCells.map(c => ({
+          content: stripHtml(c.content),
+          type: c.type,
+          imageURLs: extractImageURLs(c.content),
+        })),
+      },
+    });
+  }, [stream.id, getBlock, updateBlock, startStreaming]);
+
+  /**
    * CellKeymap callbacks for Enter/Backspace at cell boundaries.
    * Stable reference to avoid re-creating the extension on every render.
    */
   const cellKeymapCallbacks = useRef<CellKeymapCallbacks>({
     onCreateCell: (afterCellId: string) => handleCreateCell(afterCellId),
     onDeleteCell: (cellId: string) => handleDeleteCell(cellId),
+    onThink: (cellId: string) => handleThink(cellId),
   });
 
   // Keep callbacks in sync
@@ -437,7 +573,8 @@ export function UnifiedStreamEditor({
     // replacing the object would leave the keymap calling stale callbacks.
     cellKeymapCallbacks.current.onCreateCell = handleCreateCell;
     cellKeymapCallbacks.current.onDeleteCell = handleDeleteCell;
-  }, [handleCreateCell, handleDeleteCell]);
+    cellKeymapCallbacks.current.onThink = handleThink;
+  }, [handleCreateCell, handleDeleteCell, handleThink]);
 
   // Handle editor updates - extract cells and sync to store, then schedule save
   const handleUpdate = useCallback(({ editor }: { editor: Editor }) => {
@@ -575,7 +712,111 @@ export function UnifiedStreamEditor({
       },
     },
     onUpdate: handleUpdate,
+    onSelectionUpdate: ({ editor }) => {
+      const { $from } = editor.state.selection;
+      let focusedId: string | null = null;
+      for (let depth = $from.depth; depth >= 0; depth--) {
+        const node = $from.node(depth);
+        if (node.type.name === 'cellBlock') {
+          focusedId = node.attrs.id ?? null;
+          break;
+        }
+      }
+      if (focusedId !== lastFocusedCellIdRef.current) {
+        lastFocusedCellIdRef.current = focusedId;
+        setFocus(focusedId);
+      }
+    },
   });
+
+  /**
+   * Replace the HTML content of a cell in the TipTap document.
+   * Used by useBridgeMessages when AI completes or content needs to be updated.
+   */
+  const replaceCellHtml = useCallback((cellId: string, html: string) => {
+    if (!editor) {
+      if (IS_DEV) {
+        console.warn('[UnifiedStreamEditor] replaceCellHtml: editor not ready');
+      }
+      return;
+    }
+
+    const { doc, schema } = editor.state;
+
+    // Find the cellBlock with this ID
+    const result = findCellBlockById(doc, cellId);
+    if (!result) {
+      if (IS_DEV) {
+        console.warn('[UnifiedStreamEditor] replaceCellHtml: cell not found:', cellId);
+      }
+      return;
+    }
+
+    const { pos, node } = result;
+
+    // Parse the new HTML as *cell content*, not as a whole document.
+    //
+    // IMPORTANT:
+    // Our doc schema is `doc -> cellBlock+`. If we parse arbitrary HTML as a `doc`,
+    // ProseMirror will "helpfully" wrap it in a `cellBlock` to satisfy the schema.
+    // If we then insert that into an existing cellBlock, you get a *nested cellBlock*
+    // (exactly the bug you saw: AI response appears as a cell-within-a-cell).
+    const safeHtml = html && html.trim().length > 0 ? html : '<p></p>';
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = `<div data-cell-block data-cell-id="__parse" data-cell-type="text">${safeHtml}</div>`;
+
+    const pmParser = DOMParser.fromSchema(schema);
+    const parsedDoc = pmParser.parse(wrapper);
+    const parsedCell = parsedDoc.firstChild;
+    const parsedContent = parsedCell?.type.name === 'cellBlock' ? parsedCell.content : parsedDoc.content;
+
+    // Replace the cellBlock content (keep the cellBlock node, replace its content)
+    const cellStart = pos + 1;
+    const cellEnd = pos + node.nodeSize - 1;
+
+    const tr = editor.state.tr.replaceWith(cellStart, cellEnd, parsedContent);
+    editor.view.dispatch(tr);
+
+    // Prevent redundant "save storm" after AI completes.
+    // useBridgeMessages already persisted the final content; by updating baseline here,
+    // we avoid unified persistence re-saving the same content again.
+    const order = useBlockStore.getState().getBlock(cellId)?.order ?? 0;
+    baselineRef.current.set(cellId, { content: html, order });
+    pendingSavesRef.current.delete(cellId);
+
+    if (IS_DEV) {
+      console.log('[UnifiedStreamEditor] replaceCellHtml: updated cell:', cellId);
+    }
+  }, [editor]);
+
+  /**
+   * EditorAPI for useBridgeMessages to update the TipTap document.
+   */
+  const editorAPI = useMemo<EditorAPI>(() => ({
+    replaceCellHtml,
+  }), [replaceCellHtml]);
+
+  // Bridge message handling (AI streaming, modifiers, sources, etc.)
+  const { sources, setSources } = useBridgeMessages({
+    streamId: stream.id,
+    initialSources: stream.sources,
+    editorAPI,
+  });
+
+  const handleSourceRemoved = useCallback((sourceId: string) => {
+    setSources(prev => prev.filter(s => s.id !== sourceId));
+  }, [setSources]);
+
+  const handleCellClickFromOutline = useCallback((cellId: string) => {
+    if (!editor) return;
+    const result = findCellBlockById(editor.state.doc, cellId);
+    if (!result) return;
+    const cellContentStart = result.pos + 1;
+    const sel = Selection.findFrom(editor.state.doc.resolve(cellContentStart), 1, true);
+    if (!sel) return;
+    editor.view.dispatch(editor.state.tr.setSelection(sel).scrollIntoView());
+    editor.view.focus();
+  }, [editor]);
 
   // Initialize store with stream data on mount and seed baseline
   useEffect(() => {
@@ -623,9 +864,61 @@ export function UnifiedStreamEditor({
         <button onClick={onBack} className="back-button">
           &larr; Back
         </button>
-        <h1 className="stream-title-editable">{stream.title}</h1>
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            type="text"
+            className="stream-title-input"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={saveTitle}
+            onKeyDown={handleTitleKeyDown}
+            autoFocus
+          />
+        ) : (
+          <h1 onClick={startEditingTitle} className="stream-title-editable">
+            {title}
+          </h1>
+        )}
         <span className="stream-hint">Unified editor (auto-saves)</span>
+        <button
+          onClick={() => setShowDeleteConfirm(true)}
+          className="delete-stream-button"
+          title="Delete stream"
+          type="button"
+        >
+          Delete
+        </button>
       </header>
+
+      {/* Delete confirmation dialog (parity with StreamEditor) */}
+      {showDeleteConfirm && (
+        <div className="delete-confirm-overlay" onClick={() => setShowDeleteConfirm(false)}>
+          <div className="delete-confirm-dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete this stream?</h2>
+            <p>This will permanently delete "{title}" and all its contents. This cannot be undone.</p>
+            <div className="delete-confirm-actions">
+              <button
+                className="delete-confirm-cancel"
+                onClick={() => setShowDeleteConfirm(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="delete-confirm-delete"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  onDelete();
+                }}
+                type="button"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="stream-body">
         <div className="stream-content unified-editor-container">
@@ -651,7 +944,49 @@ export function UnifiedStreamEditor({
             </div>
           ) : null}
         </div>
+
+        <UnifiedStreamSidePanel
+          streamId={stream.id}
+          sources={sources}
+          onSourceRemoved={handleSourceRemoved}
+          onCellClick={handleCellClickFromOutline}
+        />
       </div>
     </div>
+  );
+}
+
+function UnifiedStreamSidePanel({
+  streamId,
+  sources,
+  onSourceRemoved,
+  onCellClick,
+}: {
+  streamId: string;
+  sources: import('../types').SourceReference[];
+  onSourceRemoved: (sourceId: string) => void;
+  onCellClick: (cellId: string) => void;
+}) {
+  // IMPORTANT:
+  // Don't select `getBlocksArray()` directly here. It returns a *new array* each call.
+  // With `useSyncExternalStore`, an unstable snapshot can cause infinite render loops
+  // (React "maximum update depth exceeded").
+  const blockOrder = useBlockStore((s) => s.blockOrder);
+  const blocks = useBlockStore((s) => s.blocks);
+  const focusedCellId = useBlockStore((s) => s.focusedBlockId);
+
+  const cells = useMemo(() => {
+    return blockOrder.map((id) => blocks.get(id)).filter(Boolean) as import('../types').Cell[];
+  }, [blockOrder, blocks]);
+
+  return (
+    <SidePanel
+      cells={cells}
+      focusedCellId={focusedCellId}
+      onCellClick={onCellClick}
+      streamId={streamId}
+      sources={sources}
+      onSourceRemoved={onSourceRemoved}
+    />
   );
 }

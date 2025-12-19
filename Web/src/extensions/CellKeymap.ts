@@ -13,6 +13,8 @@ export interface CellKeymapCallbacks {
   onCreateCell: (afterCellId: string) => string;
   /** Called when Backspace deletes an empty cell. */
   onDeleteCell: (cellId: string) => void;
+  /** Called when Cmd+Enter triggers AI thinking. */
+  onThink?: (cellId: string) => void;
 }
 
 /**
@@ -85,6 +87,18 @@ export const CellKeymap = Extension.create<{ callbacks: CellKeymapCallbacks | nu
 
             const isAtCellStart = startSelection.from === selection.from;
             const isAtCellEnd = endSelection.from === selection.from;
+
+            // === CMD+ENTER - AI Think ===
+            if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
+              if (callbacks?.onThink) {
+                if (IS_DEV) {
+                  console.log('[CellKeymap] Cmd+Enter - triggering AI think for cell:', cellId);
+                }
+                callbacks.onThink(cellId);
+                return true;
+              }
+              return false;
+            }
 
             // === ENTER KEY ===
             if (event.key === 'Enter' && !event.shiftKey && !event.metaKey && !event.ctrlKey) {

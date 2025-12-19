@@ -1,20 +1,36 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { SourceReference, Modifier, CellVersion, Cell, bridge } from '../types';
 import { markdownToHtml } from '../utils/markdown';
 import { useBlockStore } from '../store/blockStore';
 
+/**
+ * EditorAPI - allows useBridgeMessages to update the TipTap document
+ * when AI completes or content needs to be inserted.
+ */
+export interface EditorAPI {
+  /** Replace the HTML content of a cell in the TipTap document */
+  replaceCellHtml: (cellId: string, html: string) => void;
+  /** Insert new cells into the TipTap document (for Quick Panel) */
+  insertCells?: (cells: Cell[], afterCellId?: string) => void;
+}
+
 interface UseBridgeMessagesOptions {
   streamId: string;
   initialSources: SourceReference[];
+  /** Optional EditorAPI for updating TipTap document in unified editor mode */
+  editorAPI?: EditorAPI | null;
 }
 
 /**
  * Hook to handle all bridge messages from Swift backend
  * Manages AI streaming, modifiers, refresh, and source updates
  */
-export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessagesOptions) {
-  const store = useBlockStore();
+export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBridgeMessagesOptions) {
   const [sources, setSources] = useState<SourceReference[]>(initialSources);
+
+  // Keep editorAPI in a ref so the effect doesn't re-run when it changes
+  const editorAPIRef = useRef<EditorAPI | null>(null);
+  editorAPIRef.current = editorAPI ?? null;
 
   // Update sources when initialSources changes (stream switch)
   useEffect(() => {
@@ -28,6 +44,11 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
       try {
       // Debug: log all messages to see what's coming through
       console.log('[useBridgeMessages] Received:', message.type);
+
+      // IMPORTANT: Don't subscribe to the zustand store from this hook.
+      // UnifiedStreamEditor updates store on every keystroke; subscribing here would cause
+      // this effect to re-run and re-subscribe to the bridge constantly.
+      const store = useBlockStore.getState();
 
       // Source updates
       if (message.type === 'sourceAdded' && message.payload?.source) {
@@ -180,6 +201,12 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
         const cell = store.getBlock(cellId);
         if (cell) {
           store.updateBlock(cellId, { content: finalContent });
+
+          // Update TipTap document if editorAPI is available (unified editor mode)
+          if (editorAPIRef.current) {
+            console.log('[useBridgeMessages] aiComplete: updating TipTap document for cell:', cellId);
+            editorAPIRef.current.replaceCellHtml(cellId, finalContent);
+          }
 
           // Save to Swift (include modelId if set, preserve sourceApp and references)
           bridge.send({
@@ -384,7 +411,7 @@ export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessage
       console.log('[useBridgeMessages] Cleaning up message handler for streamId:', streamId);
       unsubscribe();
     };
-  }, [streamId, store]);
+  }, [streamId]);
 
   return {
     sources,
