@@ -117,7 +117,7 @@ body {
 /* ==================== Stream List ==================== */
 
 .stream-list {
-  padding: var(--spacing-xxl) var(--spacing-xl);
+  padding: var(--spacing-xl) var(--spacing-xl);
   max-width: 600px;
   margin: 0 auto;
   width: 100%;
@@ -2384,6 +2384,8 @@ body {
 .unified-editor-content {
   max-width: 720px;
   margin: 0 auto;
+  /* Left padding to prevent hover controls (left: -36px) from being clipped */
+  padding-left: 40px;
 }
 
 /* Cell Block Wrapper - similar to block-wrapper */
@@ -2601,15 +2603,6 @@ body {
 
 .cell-block-content p + p {
   margin-top: 0.5em;
-}
-
-/* Visual separator between cell blocks */
-.cell-block-wrapper::after {
-  content: '';
-  display: block;
-  height: 1px;
-  background: var(--color-border-subtle);
-  margin: var(--spacing-xs) 0;
 }
 
 /* Drag reorder polish */
