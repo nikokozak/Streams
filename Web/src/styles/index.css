@@ -2446,3 +2446,126 @@ body {
 .cell-overlay-live-toggle--active .cell-overlay-live-text {
   color: var(--color-accent);
 }
+
+/* ============================================
+   UNIFIED EDITOR STYLES (Slice 01+)
+   ============================================ */
+
+.unified-editor-container {
+  padding: var(--spacing-lg);
+}
+
+.unified-editor-content {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* Cell Block Wrapper - similar to block-wrapper */
+.cell-block-wrapper {
+  position: relative;
+  margin: 0 auto;
+  max-width: 720px;
+}
+
+.cell-block-wrapper + .cell-block-wrapper {
+  margin-top: 2px;
+}
+
+.cell-block-wrapper--hovered .cell-block-content {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Cell Block Controls - appear on hover, left side */
+.cell-block-controls {
+  position: absolute;
+  left: -36px;
+  top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+
+.cell-block-controls--visible {
+  opacity: 1;
+}
+
+.cell-block-info-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
+}
+
+.cell-block-info-button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-accent);
+}
+
+.cell-block-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
+}
+
+.cell-block-drag-handle:hover {
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.cell-block-indicator {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.cell-block-indicator--live {
+  color: var(--color-accent);
+}
+
+.cell-block-indicator--dependent {
+  color: var(--color-text-secondary);
+}
+
+/* Cell Block Content - the editable area */
+.cell-block-content {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  min-height: 1.6em;
+}
+
+.cell-block-content p {
+  margin: 0;
+}
+
+.cell-block-content p + p {
+  margin-top: 0.5em;
+}
+
+/* Visual separator between cell blocks */
+.cell-block-wrapper::after {
+  content: '';
+  display: block;
+  height: 1px;
+  background: var(--color-border-subtle);
+  margin: var(--spacing-xs) 0;
+}

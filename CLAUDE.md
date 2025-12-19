@@ -33,6 +33,22 @@ For non-trivial work:
 - Ask GPT-5.2 to review diffs AFTER each change
 - If GPT-5.2 flags a concern, address it before continuing
 
+### Commit Approval Workflow
+
+**DO NOT COMMIT until GPT approves the change.**
+
+After completing a slice/task, provide a comprehensive summary that includes:
+
+1. **What was built** — Files created/modified, their purpose, key implementation details
+2. **Schema/architecture decisions** — Any structural choices and why
+3. **What was NOT built** — Explicit list of deferred functionality
+4. **How it integrates** — How new code connects to existing systems
+5. **Testing instructions** — How to verify the change works
+6. **Risks/concerns** — Anything that might break or needs attention
+7. **Code snippets** — Key code sections for review (not just file names)
+
+The user will share this summary with GPT for review. Only commit after approval.
+
 ## Commands
 
 ```bash
@@ -146,7 +162,7 @@ The current architecture has N separate TipTap editor instances (one per cell). 
 - TipTap as source of truth during editing
 - Cells can contain rich block content (headings, lists, code) without forcing splits
 
-**Guiding document:** `SINGLE_EDITOR_REFACTOR.md` (to be created with detailed implementation plan)
+**Guiding document:** `IMPLEMENTATION_TASKS_UNIFIED_STREAM_EDITOR_BLOCK_PLUS.md`
 
 **Previous attempt failed because:**
 1. Made cellBlock inline-only, forcing AI response splits
