@@ -27,6 +27,7 @@ export function CellOverlay({
 }: CellOverlayProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const promptEditorRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const blocks = useBlockStore((state) => state.blocks);
 
   // Local state for editable prompt (stored as HTML for TipTap)
@@ -49,6 +50,23 @@ export function CellOverlay({
     tmp.innerHTML = html;
     return tmp.textContent || tmp.innerText || '';
   }, []);
+
+  // Focus sensible control on mount
+  useEffect(() => {
+    // Use rAF to ensure DOM is ready (TipTap editor may need time to mount)
+    const raf = requestAnimationFrame(() => {
+      if (cell.type === 'aiResponse' && promptEditorRef.current) {
+        // Focus the prompt editor for AI cells.
+        // .prompt-editor-content is the contenteditable element rendered by PromptEditor's TipTap instance.
+        const editorEl = promptEditorRef.current.querySelector('.prompt-editor-content') as HTMLElement;
+        editorEl?.focus();
+      } else {
+        // Focus close button for non-AI cells
+        closeButtonRef.current?.focus();
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []); // Only run on mount
 
   // Close on ESC key (but not when editing prompt)
   useEffect(() => {
@@ -117,7 +135,7 @@ export function CellOverlay({
       {/* Header with close button */}
       <div className="cell-overlay-header">
         <span className="cell-overlay-title">Cell Details</span>
-        <button className="cell-overlay-close" onClick={onClose}>
+        <button ref={closeButtonRef} className="cell-overlay-close" onClick={onClose}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
