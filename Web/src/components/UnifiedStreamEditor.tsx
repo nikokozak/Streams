@@ -3,9 +3,12 @@ import StarterKit from '@tiptap/starter-kit';
 import Image from '@tiptap/extension-image';
 import Mention from '@tiptap/extension-mention';
 import Document from '@tiptap/extension-document';
-import { useMemo } from 'react';
+import { useMemo, useEffect, useCallback, useRef } from 'react';
 import { Stream, Cell } from '../types';
 import { CellBlock } from '../extensions/CellBlock';
+import { useBlockStore } from '../store/blockStore';
+import { Editor } from '@tiptap/core';
+import { DOMSerializer } from '@tiptap/pm/model';
 
 interface UnifiedStreamEditorProps {
   stream: Stream;
@@ -22,8 +25,6 @@ const IS_DEV = Boolean((import.meta as any).env?.DEV);
 
 /**
  * Escape a string so it is safe to embed inside a double-quoted HTML attribute value.
- * NOTE: We're building HTML strings for TipTap initialization, so *any* unescaped quotes
- * or angle brackets in metadata can break parsing (or worse).
  */
 function escapeHtmlAttribute(value: string): string {
   return value
@@ -35,7 +36,7 @@ function escapeHtmlAttribute(value: string): string {
 }
 
 /**
- * Escape plain text for safe inclusion inside HTML (e.g., when wrapping plain text in <p>).
+ * Escape plain text for safe inclusion inside HTML.
  */
 function escapeHtmlText(value: string): string {
   return value
@@ -46,7 +47,6 @@ function escapeHtmlText(value: string): string {
 
 /**
  * Convert a cell to an HTML string wrapped in a cellBlock element.
- * The cellBlock attributes are stored as data-* attributes.
  */
 function cellToHtml(cell: Cell): string {
   const attrs: string[] = [
@@ -62,12 +62,10 @@ function cellToHtml(cell: Cell): string {
   if (cell.processingConfig?.refreshTrigger === 'onStreamOpen') attrs.push('data-is-live="true"');
   if (cell.processingConfig?.refreshTrigger === 'onDependencyChange') attrs.push('data-has-dependencies="true"');
 
-  // Ensure cell content has at least a paragraph for proper block+ structure
   let content = cell.content || '';
   if (!content.trim()) {
     content = '<p></p>';
   } else if (!content.trimStart().startsWith('<')) {
-    // Wrap plain text in paragraph
     content = `<p>${escapeHtmlText(content)}</p>`;
   }
 
@@ -78,15 +76,54 @@ function cellToHtml(cell: Cell): string {
  * Build HTML content from all cells.
  */
 function buildHtmlFromCells(cells: Cell[]): string {
-  // Sort cells by order
   const sortedCells = [...cells].sort((a, b) => a.order - b.order);
 
-  // If no cells, create one empty cellBlock
   if (sortedCells.length === 0) {
     return '<div data-cell-block data-cell-id="empty" data-cell-type="text"><p></p></div>';
   }
 
   return sortedCells.map(cellToHtml).join('');
+}
+
+/**
+ * Extract cell data from a TipTap editor document.
+ * Returns an array of partial Cell objects with id, type, content, and order.
+ */
+function extractCellsFromDoc(editor: Editor): Partial<Cell>[] {
+  const cells: Partial<Cell>[] = [];
+  const { doc, schema } = editor.state;
+  const serializer = DOMSerializer.fromSchema(schema);
+
+  doc.forEach((node, _offset, index) => {
+    if (node.type.name === 'cellBlock') {
+      // Serialize the cellBlock's content (not the cellBlock itself) to HTML
+      const contentFragment = node.content;
+      const domFragment = serializer.serializeFragment(contentFragment);
+
+      // Convert DOM fragment to HTML string
+      const tempDiv = document.createElement('div');
+      tempDiv.appendChild(domFragment);
+      const html = tempDiv.innerHTML;
+
+      cells.push({
+        id: node.attrs.id || `cell-${index}`,
+        type: node.attrs.type || 'text',
+        content: html,
+        order: index,
+        modelId: node.attrs.modelId || undefined,
+        originalPrompt: node.attrs.originalPrompt || undefined,
+        sourceApp: node.attrs.sourceApp || undefined,
+        blockName: node.attrs.blockName || undefined,
+        processingConfig: node.attrs.isLive
+          ? { refreshTrigger: 'onStreamOpen' }
+          : node.attrs.hasDependencies
+            ? { refreshTrigger: 'onDependencyChange' }
+            : undefined,
+      });
+    }
+  });
+
+  return cells;
 }
 
 // Custom document that only allows cellBlocks at the top level
@@ -98,30 +135,68 @@ const CustomDocument = Document.extend({
  * Unified stream editor - single TipTap instance for the entire stream.
  * Enables true cross-cell text selection.
  *
- * Slice 01: Read-only rendering to validate parsing and layout.
+ * Slice 02: Editable with store sync (no persistence yet).
  */
 export function UnifiedStreamEditor({
   stream,
   onBack,
 }: UnifiedStreamEditorProps) {
+  // Subscribe to only the stable actions we need.
+  // Avoid subscribing to the entire store state object: on every keystroke we call updateBlock,
+  // which would otherwise re-render this component and (potentially) churn TipTap options.
+  const loadStream = useBlockStore((s) => s.loadStream);
+  const getBlock = useBlockStore((s) => s.getBlock);
+  const updateBlock = useBlockStore((s) => s.updateBlock);
+  const cellCount = useBlockStore((s) => s.blockOrder.length);
+
+  // Track if we've initialized the store for this stream
+  const initializedStreamId = useRef<string | null>(null);
+
   // Build initial HTML from cells
   const initialHtml = useMemo(() => buildHtmlFromCells(stream.cells), [stream.cells]);
+
+  // Handle editor updates - extract cells and sync to store
+  const handleUpdate = useCallback(({ editor }: { editor: Editor }) => {
+    const extractedCells = extractCellsFromDoc(editor);
+
+    if (IS_DEV) {
+      console.log('[UnifiedStreamEditor] onUpdate: extracted', extractedCells.length, 'cells');
+    }
+
+    // Update each cell in the store
+    // Note: We're updating in-memory only, no persistence yet (Slice 03)
+    for (const cell of extractedCells) {
+      if (cell.id) {
+        const existingBlock = getBlock(cell.id);
+        if (existingBlock) {
+          const nextContent = cell.content ?? existingBlock.content;
+          const nextOrder = cell.order ?? existingBlock.order;
+
+          // CRITICAL: Don't update unchanged blocks.
+          // updateBlock() bumps updatedAt and triggers store subscribers.
+          if (existingBlock.content !== nextContent || existingBlock.order !== nextOrder) {
+            updateBlock(cell.id, {
+              content: nextContent,
+              order: nextOrder,
+            });
+          }
+        }
+        // Note: We don't add new blocks here yet - that requires Enter key handling (Slice 04)
+      }
+    }
+  }, [getBlock, updateBlock]);
 
   // Create the unified editor
   const editor = useEditor({
     extensions: [
-      // Custom document that requires cellBlock+ at top level
       CustomDocument,
-      // StarterKit without document (we use CustomDocument)
       StarterKit.configure({
         document: false,
         heading: {
           levels: [1, 2, 3],
         },
       }),
-      // CellBlock node for wrapping cells
       CellBlock,
-      // Image support
       Image.configure({
         inline: false,
         allowBase64: false,
@@ -130,7 +205,6 @@ export function UnifiedStreamEditor({
           draggable: 'false',
         },
       }),
-      // Mention support for @block-references
       Mention.configure({
         HTMLAttributes: {
           class: 'cell-reference',
@@ -141,14 +215,25 @@ export function UnifiedStreamEditor({
       }),
     ],
     content: initialHtml,
-    // Slice 01: Start read-only to validate parsing
-    editable: false,
+    editable: true, // Slice 02: Enable editing
     editorProps: {
       attributes: {
         class: 'unified-editor-content',
       },
     },
+    onUpdate: handleUpdate,
   });
+
+  // Initialize store with stream data on mount
+  useEffect(() => {
+    if (stream.id !== initializedStreamId.current) {
+      if (IS_DEV) {
+        console.log('[UnifiedStreamEditor] Initializing store for stream:', stream.id);
+      }
+      loadStream(stream.id, stream.cells);
+      initializedStreamId.current = stream.id;
+    }
+  }, [stream.id, stream.cells, loadStream]);
 
   return (
     <div className="stream-editor">
@@ -157,7 +242,7 @@ export function UnifiedStreamEditor({
           &larr; Back
         </button>
         <h1 className="stream-title-editable">{stream.title}</h1>
-        <span className="stream-hint">Unified Editor (read-only preview)</span>
+        <span className="stream-hint">Editing enabled (changes not saved)</span>
       </header>
 
       <div className="stream-body">
@@ -179,7 +264,8 @@ export function UnifiedStreamEditor({
                 color: 'var(--color-text-secondary)',
               }}
             >
-              <strong>Debug:</strong> {stream.cells.length} cells loaded. Drag-select across cells to test cross-cell selection.
+              <strong>Debug:</strong> {stream.cells.length} cells from stream, {cellCount} in store.
+              Editing enabled. Changes sync to store (no persistence yet).
             </div>
           ) : null}
         </div>
