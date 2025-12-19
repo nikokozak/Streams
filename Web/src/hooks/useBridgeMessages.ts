@@ -11,7 +11,9 @@ export interface EditorAPI {
   /** Replace the HTML content of a cell in the TipTap document */
   replaceCellHtml: (cellId: string, html: string) => void;
   /** Insert new cells into the TipTap document (for Quick Panel) */
-  insertCells?: (cells: Cell[], afterCellId?: string) => void;
+  insertCells?: (cells: Cell[]) => void;
+  /** Insert an image at the current cursor position */
+  insertImage?: (imageUrl: string) => void;
 }
 
 interface UseBridgeMessagesOptions {
@@ -71,21 +73,27 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
         // Only process if this is for the current stream
         if (addedStreamId === streamId) {
-          // Add each cell to the store
-          for (const cell of cells) {
-            store.addBlock({
-              id: cell.id,
-              streamId: cell.streamId,
-              content: cell.content,
-              type: cell.type,
-              order: cell.order,
-              sourceBinding: cell.sourceBinding || null,
-              originalPrompt: cell.originalPrompt,
-              references: cell.references,
-              sourceApp: cell.sourceApp,
-              createdAt: cell.createdAt || new Date().toISOString(),
-              updatedAt: cell.updatedAt || new Date().toISOString(),
-            });
+          // In unified editor mode, use insertCells to update both TipTap and store
+          if (editorAPIRef.current?.insertCells) {
+            console.log('[QuickPanel] Using insertCells for unified editor');
+            editorAPIRef.current.insertCells(cells);
+          } else {
+            // Legacy mode: add each cell to the store directly
+            for (const cell of cells) {
+              store.addBlock({
+                id: cell.id,
+                streamId: cell.streamId,
+                content: cell.content,
+                type: cell.type,
+                order: cell.order,
+                sourceBinding: cell.sourceBinding || null,
+                originalPrompt: cell.originalPrompt,
+                references: cell.references,
+                sourceApp: cell.sourceApp,
+                createdAt: cell.createdAt || new Date().toISOString(),
+                updatedAt: cell.updatedAt || new Date().toISOString(),
+              });
+            }
           }
 
           // If triggerAI is set, start AI streaming for that cell
@@ -153,28 +161,36 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
         console.log('[useBridgeMessages] imageDropped payload:', JSON.stringify(message.payload));
         if (message.payload?.assetUrl) {
           const assetUrl = message.payload.assetUrl as string;
-          const { focusedBlockId, blockOrder } = store;
-          console.log('[useBridgeMessages] Inserting image:', assetUrl, 'focusedBlock:', focusedBlockId);
 
-          store.insertImageInFocusedBlock(assetUrl);
+          // In unified editor mode, insert via TipTap (handleUpdate will sync and persist)
+          if (editorAPIRef.current?.insertImage) {
+            console.log('[useBridgeMessages] Using insertImage for unified editor:', assetUrl);
+            editorAPIRef.current.insertImage(assetUrl);
+          } else {
+            // Legacy mode: update store directly and persist
+            const { focusedBlockId, blockOrder } = store;
+            console.log('[useBridgeMessages] Legacy mode inserting image:', assetUrl, 'focusedBlock:', focusedBlockId);
 
-          // Save the updated block to persist the image reference
-          // insertImageInFocusedBlock uses focusedBlockId or falls back to last block
-          const targetBlockId = focusedBlockId || blockOrder[blockOrder.length - 1];
-          const block = store.getBlock(targetBlockId);
-          if (block) {
-            bridge.send({
-              type: 'saveCell',
-              payload: {
-                id: block.id,
-                streamId,
-                content: block.content,
-                type: block.type,
-                order: block.order,
-                sourceApp: block.sourceApp,
-                references: block.references,
-              },
-            });
+            store.insertImageInFocusedBlock(assetUrl);
+
+            // Save the updated block to persist the image reference
+            // insertImageInFocusedBlock uses focusedBlockId or falls back to last block
+            const targetBlockId = focusedBlockId || blockOrder[blockOrder.length - 1];
+            const block = store.getBlock(targetBlockId);
+            if (block) {
+              bridge.send({
+                type: 'saveCell',
+                payload: {
+                  id: block.id,
+                  streamId,
+                  content: block.content,
+                  type: block.type,
+                  order: block.order,
+                  sourceApp: block.sourceApp,
+                  references: block.references,
+                },
+              });
+            }
           }
         } else {
           console.warn('[useBridgeMessages] imageDropped but no assetUrl in payload');

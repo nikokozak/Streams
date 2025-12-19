@@ -2,6 +2,7 @@ import { NodeViewWrapper, NodeViewContent } from '@tiptap/react';
 import { NodeViewProps } from '@tiptap/core';
 import { useState } from 'react';
 import { useBlockStore } from '../store/blockStore';
+import { bridge } from '../types';
 
 const IS_DEV = Boolean((import.meta as any).env?.DEV);
 
@@ -59,16 +60,68 @@ function DragHandleIcon() {
  *
  * Slice 05: Subscribes to store for streaming/refreshing indicators.
  */
-export function CellBlockView({ node }: NodeViewProps) {
+export function CellBlockView({ node, updateAttributes }: NodeViewProps) {
   const [isHovered, setIsHovered] = useState(false);
 
-  const { id, type, isLive, hasDependencies } = node.attrs;
-  const isAiBlock = type === 'aiResponse';
+  const { id } = node.attrs;
+
+  // IMPORTANT: node.attrs can be stale for dynamic data (type/model/live) because we don't
+  // always update node attrs when store changes. Use store as source of truth for UI chrome.
+  const cellType = useBlockStore((s) => (id ? s.getBlock(id)?.type : undefined)) ?? node.attrs.type;
+  const modelId = useBlockStore((s) => (id ? s.getBlock(id)?.modelId : undefined)) ?? node.attrs.modelId;
+  const processingTrigger = useBlockStore((s) => (id ? s.getBlock(id)?.processingConfig?.refreshTrigger : undefined));
+  const isLive = processingTrigger === 'onStreamOpen';
+  const hasDependencies = processingTrigger === 'onDependencyChange';
+
+  const isAiBlock = cellType === 'aiResponse';
 
   // Subscribe to streaming/refreshing state for this cell
   const isStreaming = useBlockStore((s) => s.isStreaming(id));
   const isRefreshing = useBlockStore((s) => s.isRefreshing(id));
   const showSpinner = isStreaming || isRefreshing;
+
+  const handleToggleLive = (nextIsLive: boolean) => {
+    if (!id) return;
+    const store = useBlockStore.getState();
+    const cell = store.getBlock(id);
+    if (!cell) return;
+
+    const nextConfig = nextIsLive
+      ? { ...cell.processingConfig, refreshTrigger: 'onStreamOpen' as const }
+      : { ...cell.processingConfig, refreshTrigger: undefined };
+
+    store.updateBlock(id, { processingConfig: nextConfig });
+
+    // Keep node attrs roughly in sync for serialization/debugging.
+    // (UI reads from store; attrs are secondary.)
+    updateAttributes({
+      isLive: nextIsLive,
+      hasDependencies: false,
+    });
+
+    // Persist immediately — content didn't change, so debounced content saves won't fire.
+    bridge.send({
+      type: 'saveCell',
+      payload: {
+        id,
+        streamId: cell.streamId,
+        content: cell.content,
+        type: cell.type,
+        order: cell.order,
+        originalPrompt: cell.originalPrompt,
+        restatement: cell.restatement,
+        modelId: cell.modelId,
+        processingConfig: nextConfig,
+        references: cell.references,
+        blockName: cell.blockName,
+        sourceApp: cell.sourceApp,
+        modifiers: cell.modifiers,
+        versions: cell.versions,
+        activeVersionId: cell.activeVersionId,
+        sourceBinding: cell.sourceBinding,
+      },
+    });
+  };
 
   const handleInfoClick = () => {
     // TODO: Implement overlay opening via store or callback
@@ -81,11 +134,32 @@ export function CellBlockView({ node }: NodeViewProps) {
     <NodeViewWrapper
       className={`cell-block-wrapper ${isHovered ? 'cell-block-wrapper--hovered' : ''} ${showSpinner ? 'cell-block-wrapper--streaming' : ''}`}
       data-cell-id={id}
-      data-cell-type={type}
+      data-cell-type={cellType}
       data-streaming={showSpinner ? 'true' : undefined}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
+      {/* Top-right AI metadata badge (model + live toggle) */}
+      {isAiBlock && !showSpinner && (
+        <div className="cell-meta-badge" contentEditable={false}>
+          <span className="cell-meta-badge-label" title={modelId || 'AI'}>
+            {modelId || 'AI'}
+          </span>
+          <button
+            className={`cell-meta-live-toggle ${isLive ? 'cell-meta-live-toggle--active' : ''}`}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              handleToggleLive(!isLive);
+            }}
+            title={isLive ? 'Live (click to disable)' : 'Click to make live'}
+            type="button"
+          >
+            ⚡
+          </button>
+        </div>
+      )}
+
       {/* Controls - left side, non-editable */}
       <div
         className={`cell-block-controls ${isHovered || showSpinner ? 'cell-block-controls--visible' : ''}`}

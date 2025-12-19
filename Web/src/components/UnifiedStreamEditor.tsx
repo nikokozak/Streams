@@ -12,7 +12,7 @@ import { SidePanel } from './SidePanel';
 import { useBlockStore } from '../store/blockStore';
 import { Editor } from '@tiptap/core';
 import { DOMSerializer, DOMParser, Node as ProseMirrorNode } from '@tiptap/pm/model';
-import { Selection } from '@tiptap/pm/state';
+import { Selection, NodeSelection } from '@tiptap/pm/state';
 import { stripHtml, extractImages, buildImageBlock, extractImageURLs } from '../utils/html';
 import { useBridgeMessages, EditorAPI } from '../hooks/useBridgeMessages';
 
@@ -790,11 +790,155 @@ export function UnifiedStreamEditor({
   }, [editor]);
 
   /**
+   * Insert new cells into the TipTap document.
+   * Used by useBridgeMessages when Quick Panel adds cells.
+   * Cells are inserted at the end of the document.
+   */
+  const insertCells = useCallback((cells: Cell[]) => {
+    if (!editor) {
+      if (IS_DEV) {
+        console.warn('[UnifiedStreamEditor] insertCells: editor not ready');
+      }
+      return;
+    }
+
+    if (cells.length === 0) return;
+
+    const { schema } = editor.state;
+
+    // Build HTML for all cells and parse as a fragment
+    const cellsHtml = cells.map(cell => cellToHtml(cell)).join('');
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = cellsHtml;
+
+    const pmParser = DOMParser.fromSchema(schema);
+    const parsedDoc = pmParser.parse(wrapper);
+
+    // Insert at the end of the document
+    const docEnd = editor.state.doc.content.size;
+    const tr = editor.state.tr.insert(docEnd, parsedDoc.content);
+    editor.view.dispatch(tr);
+
+    // Add cells to store and baseline (they're already persisted by Swift)
+    for (const cell of cells) {
+      const normalizedContent = cell.content && cell.content.trim().length > 0 ? cell.content : '<p></p>';
+
+      addBlock({
+        id: cell.id,
+        streamId: cell.streamId,
+        content: normalizedContent,
+        type: cell.type,
+        order: cell.order,
+        sourceBinding: cell.sourceBinding || null,
+        restatement: cell.restatement,
+        originalPrompt: cell.originalPrompt,
+        modelId: cell.modelId,
+        references: cell.references,
+        sourceApp: cell.sourceApp,
+        blockName: cell.blockName,
+        processingConfig: cell.processingConfig,
+        modifiers: cell.modifiers,
+        versions: cell.versions,
+        activeVersionId: cell.activeVersionId,
+        createdAt: cell.createdAt || new Date().toISOString(),
+        updatedAt: cell.updatedAt || new Date().toISOString(),
+      });
+
+      // Add to baseline so we don't trigger redundant saves.
+      // IMPORTANT: use the store's post-insert order (blockStore renormalizes orders),
+      // otherwise we can accidentally schedule saves due to order mismatches.
+      const inserted = useBlockStore.getState().getBlock(cell.id);
+      baselineRef.current.set(cell.id, {
+        content: normalizedContent,
+        order: inserted?.order ?? cell.order,
+      });
+    }
+
+    if (IS_DEV) {
+      console.log('[UnifiedStreamEditor] insertCells: inserted', cells.length, 'cells');
+    }
+  }, [editor, addBlock]);
+
+  /**
+   * Insert an image at the current cursor position.
+   * Used by useBridgeMessages when an image is dropped.
+   */
+  const insertImage = useCallback((imageUrl: string) => {
+    if (!editor) {
+      if (IS_DEV) {
+        console.warn('[UnifiedStreamEditor] insertImage: editor not ready');
+      }
+      return;
+    }
+
+    // If an image node is currently selected, NEVER replace it.
+    // Instead, create a new cell below and insert the image there.
+    const selection = editor.state.selection;
+    if (selection instanceof NodeSelection && selection.node.type.name === 'image') {
+      const { $from } = selection;
+
+      // Find the enclosing cellBlock
+      let cellBlockPos: number | null = null;
+      let cellBlockNode: ProseMirrorNode | null = null;
+      for (let depth = $from.depth; depth >= 0; depth--) {
+        const n = $from.node(depth);
+        if (n.type.name === 'cellBlock') {
+          cellBlockPos = $from.before(depth);
+          cellBlockNode = n;
+          break;
+        }
+      }
+
+      const afterCellId: string | null = cellBlockNode?.attrs?.id ?? null;
+      if (!cellBlockNode || cellBlockPos === null || !afterCellId) {
+        // Fallback: no cell context, just insert at cursor.
+        editor.chain().focus().setImage({ src: imageUrl }).run();
+        return;
+      }
+
+      // Create a new cell in store (and persist an initial empty cell row like Enter does).
+      const newCellId = handleCreateCell(afterCellId);
+
+      // Insert a new cellBlock node after the current one, with the image and an empty paragraph.
+      const { schema } = editor.state;
+      const cellBlockType = schema.nodes.cellBlock;
+      const imageType = schema.nodes.image;
+      const paragraphType = schema.nodes.paragraph;
+      if (!cellBlockType || !imageType || !paragraphType) return;
+
+      const imageNode = imageType.create({ src: imageUrl });
+      const paragraphNode = paragraphType.create();
+      const newCellNode = cellBlockType.create({ id: newCellId, type: 'text' }, [imageNode, paragraphNode]);
+
+      const insertPos = cellBlockPos + cellBlockNode.nodeSize;
+      const tr = editor.state.tr.insert(insertPos, newCellNode);
+
+      // Place cursor into the paragraph after the image.
+      const newCellContentStart = insertPos + 1;
+      const sel = Selection.findFrom(tr.doc.resolve(newCellContentStart), 1, true);
+      if (sel) tr.setSelection(sel);
+
+      editor.view.dispatch(tr);
+      editor.view.focus();
+      return;
+    }
+
+    // Default: insert image at cursor position.
+    editor.chain().focus().setImage({ src: imageUrl }).run();
+
+    if (IS_DEV) {
+      console.log('[UnifiedStreamEditor] insertImage: inserted image:', imageUrl);
+    }
+  }, [editor]);
+
+  /**
    * EditorAPI for useBridgeMessages to update the TipTap document.
    */
   const editorAPI = useMemo<EditorAPI>(() => ({
     replaceCellHtml,
-  }), [replaceCellHtml]);
+    insertCells,
+    insertImage,
+  }), [replaceCellHtml, insertCells, insertImage]);
 
   // Bridge message handling (AI streaming, modifiers, sources, etc.)
   const { sources, setSources } = useBridgeMessages({

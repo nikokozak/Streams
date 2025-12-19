@@ -655,6 +655,10 @@ body {
   opacity: 1;
 }
 
+.cell-block-wrapper:hover .cell-meta-badge {
+  opacity: 1;
+}
+
 .cell-meta-badge:hover {
   color: var(--color-text-secondary);
 }
