@@ -11,8 +11,17 @@ export function ToastStack() {
   // React's `useSyncExternalStore` "getSnapshot should be cached" warning / loops.
   const toasts = useToastStore((state) => state.toasts);
   const removeToast = useToastStore((state) => state.removeToast);
+  const clearToasts = useToastStore((state) => state.clearToasts);
 
   if (toasts.length === 0) return null;
+
+  const handleCopy = async (message: string) => {
+    try {
+      await navigator.clipboard.writeText(message);
+    } catch {
+      // Fallback: do nothing on clipboard failure (rare)
+    }
+  };
 
   // aria-live lets assistive tech announce new toasts without stealing focus.
   return (
@@ -21,6 +30,15 @@ export function ToastStack() {
       aria-live="polite"
       aria-relevant="additions removals"
     >
+      {toasts.length > 1 && (
+        <button
+          className="toast-clear-all"
+          type="button"
+          onClick={clearToasts}
+        >
+          Clear all
+        </button>
+      )}
       {toasts.map((toast) => (
         <div
           key={toast.id}
@@ -29,14 +47,26 @@ export function ToastStack() {
           role={toast.kind === 'error' ? 'alert' : 'status'}
         >
           <div className="toast-message">{toast.message}</div>
-          <button
-            className="toast-dismiss"
-            type="button"
-            onClick={() => removeToast(toast.id)}
-            aria-label="Dismiss notification"
-          >
-            x
-          </button>
+          <div className="toast-actions">
+            {(toast.kind === 'error' || toast.kind === 'warning') && (
+              <button
+                className="toast-copy"
+                type="button"
+                onClick={() => handleCopy(toast.message)}
+                aria-label="Copy error message"
+              >
+                Copy
+              </button>
+            )}
+            <button
+              className="toast-dismiss"
+              type="button"
+              onClick={() => removeToast(toast.id)}
+              aria-label="Dismiss notification"
+            >
+              x
+            </button>
+          </div>
         </div>
       ))}
     </div>

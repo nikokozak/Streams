@@ -2569,6 +2569,28 @@ body {
   line-height: var(--line-height-normal);
 }
 
+.toast-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  flex-shrink: 0;
+}
+
+.toast-copy {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--spacing-sm);
+  height: 24px;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+}
+
+.toast-copy:hover {
+  background: var(--color-surface-active);
+  color: var(--color-text);
+}
+
 .toast-dismiss {
   border: 1px solid var(--color-border);
   background: var(--color-surface-hover);
@@ -2582,5 +2604,22 @@ body {
 
 .toast-dismiss:hover {
   background: var(--color-surface-active);
+  color: var(--color-text);
+}
+
+.toast-clear-all {
+  align-self: flex-end;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  margin-bottom: var(--spacing-xs);
+}
+
+.toast-clear-all:hover {
+  background: var(--color-surface-hover);
   color: var(--color-text);
 }
