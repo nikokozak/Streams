@@ -33,8 +33,7 @@ Those scripts may try to create temp files or call `ps`, which can fail under sa
 - Avoid parsing arbitrary HTML as a full `doc` under `cellBlock+`; parse inside a dummy `cellBlock` and insert its content.
 - Drag reorder persists via `reorderBlocks` bridge message; suppress content-save storms during reorder.
 
-## UX Polish Planning
+## UX Polish (Completed)
 
-- Refer to `IMPLEMENTATION_TASKS_UX_POLISH.md` for the current polish slice plan.
-- Cell-level error overlay/state-machine work is explicitly deferred unless re-approved.
+UX polish slices (toast hardening, drag reorder, overlay focus, thinking window, side panel focus) were completed in this phase. Cell-level error overlay/state-machine work remains explicitly deferred unless re-approved.
 
