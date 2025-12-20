@@ -52,11 +52,15 @@ The user will share this summary with GPT for review. Only commit after approval
 ## Commands
 
 ```bash
-xcodebuild build -scheme Ticker -destination 'platform=OS X' -derivedDataPath .build/xcode
+xcodebuild build -project Ticker.xcodeproj -scheme Ticker -destination 'platform=macOS' -derivedDataPath .build/xcode
 cd Web && npm run typecheck
 ```
 
 **Never run the app** — only build. User runs to avoid orphaned processes.
+
+> **iCloud Note**: If building from an iCloud-synced workspace causes codesign/xattr errors ("resource fork, Finder information, or similar detritus not allowed"), move the repo out of iCloud (preferred) or use `-derivedDataPath /tmp/ticker-xcode-build` as a workaround.
+
+> **Build Number**: For release builds, set `CURRENT_PROJECT_VERSION=$(git rev-list --count HEAD)` to get monotonic build numbers. CI does this automatically.
 
 ## Architecture
 
