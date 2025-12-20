@@ -2,6 +2,12 @@
 
 Before signing/notarization, document the entitlements Ticker actually needs.
 
+## Entitlements file (tracked)
+
+- `Sources/Ticker/Ticker.entitlements`
+
+Keep this file under version control so signing/notarization is reproducible and reviewable.
+
 ## Known capabilities to audit
 
 - **Accessibility API usage** (SelectionReaderService): user permission prompt and behavior
@@ -19,4 +25,3 @@ For each entitlement/capability:
 ## Goal
 
 Keep entitlements minimal and justified. Avoid requesting capabilities you don’t use.
-
