@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  swift-build:
+    name: swift-build
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (no code signing)
+        run: >
+          xcodebuild build
+          -scheme Ticker
+          -destination 'platform=OS X'
+          -derivedDataPath .build/xcode
+          CODE_SIGNING_ALLOWED=NO
+
+  web-typecheck:
+    name: web-typecheck
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Install
+        working-directory: Web
+        run: npm ci
+      - name: Typecheck
+        working-directory: Web
+        run: npm run typecheck
+
