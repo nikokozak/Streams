@@ -7,8 +7,8 @@ import UniformTypeIdentifiers
 final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
     /// Base directory for all assets - must match AssetService.assetsBaseDirectory
     private static var assetsBaseDirectory: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        return home.appendingPathComponent(".config/ticker/assets", isDirectory: true)
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        return appSupport.appendingPathComponent("Ticker/assets", isDirectory: true)
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
