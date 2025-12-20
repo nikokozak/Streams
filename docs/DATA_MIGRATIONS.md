@@ -14,7 +14,8 @@ Avoid:
 
 ### Before any schema migration
 - Copy the SQLite DB to a timestamped backup:
-  - Keep last N backups (e.g., 5–10)
+  - Create backups only when migrations are pending (avoid doing this on every launch)
+  - Keep last N backups (alpha default: 5)
   - Store alongside the DB under Application Support
 
 ### Before any location migration
@@ -31,4 +32,3 @@ Avoid:
 
 - Migrations should be forward-only, but releases must retain a downgrade path via appcast history.
 - Avoid breaking schema changes unless the migration is thoroughly tested on real data snapshots.
-
