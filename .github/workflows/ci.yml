@@ -8,9 +8,22 @@ on:
 jobs:
   swift-build:
     name: swift-build
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Build web assets (for Swift resources)
+        working-directory: Web
+        run: |
+          npm ci
+          npm run build
       - name: Build (no code signing)
         run: >
           xcodebuild build
@@ -21,7 +34,7 @@ jobs:
 
   web-typecheck:
     name: web-typecheck
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,4 +48,3 @@ jobs:
       - name: Typecheck
         working-directory: Web
         run: npm run typecheck
-
