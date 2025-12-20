@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C1000001000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000001 /* GRDB */; };
+		C1000001000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000002 /* MLXLLM */; };
 		A1000001000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000001 /* AppDelegate.swift */; };
 		A1000001000000000002 /* AssetSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000002 /* AssetSchemeHandler.swift */; };
 		A1000001000000000003 /* BridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000003 /* BridgeService.swift */; };
@@ -104,6 +106,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C1000001000000000001 /* GRDB in Frameworks */,
+				C1000001000000000002 /* MLXLLM in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -265,6 +269,10 @@
 			dependencies = (
 			);
 			name = Ticker;
+			packageProductDependencies = (
+				D1000001000000000001 /* GRDB */,
+				D1000001000000000002 /* MLXLLM */,
+			);
 			productName = Ticker;
 			productReference = E8A1B2C3D4E5F6A7B8C9D0E1 /* Ticker.app */;
 			productType = "com.apple.product-type.application";
@@ -293,6 +301,10 @@
 				Base,
 			);
 			mainGroup = E8A1B2C3D4E5F6A7B8C9D100;
+			packageReferences = (
+				P1000001000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				P1000001000000000002 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+			);
 			productRefGroup = E8A1B2C3D4E5F6A7B8C9D102 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -553,6 +565,38 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		P1000001000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 6.24.0;
+			};
+		};
+		P1000001000000000002 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.29.2;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		D1000001000000000001 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = P1000001000000000001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		D1000001000000000002 /* MLXLLM */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = P1000001000000000002 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */;
+			productName = MLXLLM;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E8A1B2C3D4E5F6A7B8C9D001 /* Project object */;
 }
