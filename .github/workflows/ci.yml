@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -20,7 +24,9 @@ jobs:
         id: swift_changes
         uses: dorny/paths-filter@v3
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         with:
+          token: ${{ github.token }}
           filters: |
             swift:
               - 'Sources/**'
@@ -31,6 +37,12 @@ jobs:
         id: swift_should_build
         run: |
           if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "${{ steps.swift_changes.outcome }}" != "success" ]]; then
+            echo "Swift change detection failed; defaulting to build."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -71,24 +83,26 @@ jobs:
         id: web_changes
         uses: dorny/paths-filter@v3
         if: github.event_name == 'pull_request'
+        continue-on-error: true
         with:
+          token: ${{ github.token }}
           filters: |
             web:
               - 'Web/**'
       - uses: actions/setup-node@v4
-        if: github.event_name != 'pull_request' || steps.web_changes.outputs.web == 'true'
+        if: github.event_name != 'pull_request' || steps.web_changes.outcome != 'success' || steps.web_changes.outputs.web == 'true'
         with:
           node-version: 20
           cache: npm
           cache-dependency-path: Web/package-lock.json
       - name: Install
-        if: github.event_name != 'pull_request' || steps.web_changes.outputs.web == 'true'
+        if: github.event_name != 'pull_request' || steps.web_changes.outcome != 'success' || steps.web_changes.outputs.web == 'true'
         working-directory: Web
         run: npm ci
       - name: Typecheck
-        if: github.event_name != 'pull_request' || steps.web_changes.outputs.web == 'true'
+        if: github.event_name != 'pull_request' || steps.web_changes.outcome != 'success' || steps.web_changes.outputs.web == 'true'
         working-directory: Web
         run: npm run typecheck
       - name: Skip Web typecheck (no relevant changes)
-        if: github.event_name == 'pull_request' && steps.web_changes.outputs.web != 'true'
+        if: github.event_name == 'pull_request' && steps.web_changes.outcome == 'success' && steps.web_changes.outputs.web != 'true'
         run: echo "No Web changes detected; skipping Web typecheck."
