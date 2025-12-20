@@ -7,7 +7,9 @@ import UniformTypeIdentifiers
 final class AssetSchemeHandler: NSObject, WKURLSchemeHandler {
     /// Base directory for all assets - must match AssetService.assetsBaseDirectory
     private static var assetsBaseDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         return appSupport.appendingPathComponent("Ticker/assets", isDirectory: true)
     }
 

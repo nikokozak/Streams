@@ -7,7 +7,8 @@ final class AssetService {
 
     /// Base directory for all stream assets
     private var assetsBaseDirectory: URL {
-        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         return appSupport.appendingPathComponent("Ticker/assets", isDirectory: true)
     }
 
