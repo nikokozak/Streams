@@ -4,25 +4,34 @@ import GRDB
 /// Manages SQLite persistence for streams, cells, and sources
 final class PersistenceService {
     private let dbQueue: DatabaseQueue
+    private let databaseURL: URL
+    private let didDatabaseExistOnInit: Bool
+
+    private static let databaseBackupRetentionCount = 5
 
     init() throws {
-        let path = Self.databasePath()
-        let directory = (path as NSString).deletingLastPathComponent
-        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        let fileManager = FileManager.default
+        let databaseURL = Self.databaseURL(fileManager: fileManager)
+        self.databaseURL = databaseURL
+        self.didDatabaseExistOnInit = fileManager.fileExists(atPath: databaseURL.path)
+
+        try fileManager.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
 
         var config = Configuration()
         config.foreignKeysEnabled = true
 
-        dbQueue = try DatabaseQueue(path: path, configuration: config)
+        dbQueue = try DatabaseQueue(path: databaseURL.path, configuration: config)
         try migrate()
     }
 
-    private static func databasePath() -> String {
-        let fileManager = FileManager.default
+    private static func databaseURL(fileManager: FileManager) -> URL {
         let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         let tickerDir = appSupport.appendingPathComponent("Ticker", isDirectory: true)
-        return tickerDir.appendingPathComponent("ticker.db").path
+        return tickerDir.appendingPathComponent("ticker.db")
     }
 
     // MARK: - Migrations
@@ -144,8 +153,71 @@ final class PersistenceService {
             }
         }
 
+        if didDatabaseExistOnInit {
+            let hasPendingMigrations = try dbQueue.read { db in
+                try !migrator.hasCompletedMigrations(db)
+            }
+            if hasPendingMigrations {
+                try backupDatabaseBeforeMigration(retainingLast: Self.databaseBackupRetentionCount)
+            }
+        }
+
         try migrator.migrate(dbQueue)
     }
+
+    private func backupDatabaseBeforeMigration(retainingLast retentionCount: Int) throws {
+        let fileManager = FileManager.default
+
+        let backupsDirectory = databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("backups", isDirectory: true)
+        try fileManager.createDirectory(at: backupsDirectory, withIntermediateDirectories: true)
+
+        let timestamp = Self.backupTimestampFormatter.string(from: Date())
+        let backupURL = backupsDirectory.appendingPathComponent("ticker-\(timestamp).db")
+
+        // Use SQLite backup API via GRDB to avoid WAL/shm copy pitfalls.
+        let backupQueue = try DatabaseQueue(path: backupURL.path)
+        try dbQueue.backup(to: backupQueue)
+
+        try rotateBackups(in: backupsDirectory, retainingLast: retentionCount)
+    }
+
+    private func rotateBackups(in directory: URL, retainingLast retentionCount: Int) throws {
+        guard retentionCount > 0 else { return }
+
+        let fileManager = FileManager.default
+        let candidates = try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+
+        let backups = candidates.filter { $0.pathExtension.lowercased() == "db" }
+        guard backups.count > retentionCount else { return }
+
+        let sortedOldestFirst = backups.sorted { a, b in
+            let aDate = (try? a.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            let bDate = (try? b.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast
+            return aDate < bDate
+        }
+
+        let toDeleteCount = max(0, sortedOldestFirst.count - retentionCount)
+        for url in sortedOldestFirst.prefix(toDeleteCount) {
+            do {
+                try fileManager.removeItem(at: url)
+            } catch {
+                print("PersistenceService: Failed to delete old DB backup at \(url.path): \(error)")
+            }
+        }
+    }
+
+    private static let backupTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        return formatter
+    }()
 
     // MARK: - Stream Operations
 
