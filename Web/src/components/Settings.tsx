@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { bridge } from '../types';
+import { isUnifiedEditorEnabled, setUnifiedEditorEnabled } from '../utils/featureFlags';
 
 type Appearance = 'light' | 'dark' | 'system';
 type DefaultModel = 'openai' | 'anthropic';
@@ -34,6 +35,7 @@ export function Settings({ onClose }: SettingsProps) {
   const [saved, setSaved] = useState(false);
   const [anthropicSaved, setAnthropicSaved] = useState(false);
   const [perplexitySaved, setPerplexitySaved] = useState(false);
+  const [useUnifiedEditor, setUseUnifiedEditor] = useState(isUnifiedEditorEnabled());
 
   // Load settings on mount
   useEffect(() => {
@@ -122,6 +124,28 @@ export function Settings({ onClose }: SettingsProps) {
       </header>
 
       <div className="settings-content">
+        <section className="settings-section">
+          <h2>Editor</h2>
+          <div className="settings-field">
+            <label className="settings-toggle-label">
+              <input
+                type="checkbox"
+                checked={useUnifiedEditor}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setUseUnifiedEditor(next);
+                  setUnifiedEditorEnabled(next);
+                }}
+              />
+              <span>Unified editor (experimental)</span>
+            </label>
+            <p className="settings-hint">
+              Uses a single TipTap editor for the whole stream (cross-cell selection + unified editing).
+              URL override still works: <code>?unified=true</code>.
+            </p>
+          </div>
+        </section>
+
         <section className="settings-section">
           <h2>API Keys</h2>
 

@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { bridge, Stream, StreamSummary } from './types';
 import { StreamEditor } from './components/StreamEditor';
+import { UnifiedStreamEditor } from './components/UnifiedStreamEditor';
 import { Settings } from './components/Settings';
-import { ToastContainer } from './components/Toast';
+import { ToastStack } from './components/ToastStack';
 import { useBlockStore } from './store/blockStore';
+import { isUnifiedEditorEnabled } from './utils/featureFlags';
 
 type View = 'list' | 'stream' | 'settings';
 
@@ -136,35 +138,31 @@ export function App() {
     setView('list');
   };
 
+  let viewContent: JSX.Element;
+
   if (view === 'settings') {
-    return (
-      <>
-        <Settings onClose={handleCloseSettings} />
-        <ToastContainer />
-      </>
-    );
-  }
+    viewContent = <Settings onClose={handleCloseSettings} />;
+  } else if (view === 'stream' && currentStream) {
+    // Feature flag: use unified editor for cross-cell selection support
+    const EditorComponent = isUnifiedEditorEnabled() ? UnifiedStreamEditor : StreamEditor;
 
-  if (view === 'stream' && currentStream) {
-    return (
-      <>
-        <StreamEditor
-          stream={currentStream}
-          onBack={handleBackToList}
-          onDelete={handleDeleteStream}
-          onNavigateToStream={handleNavigateToStream}
-          pendingCellId={pendingCellId}
-          pendingSourceId={pendingSourceId}
-          onClearPendingCell={() => setPendingCellId(null)}
-          onClearPendingSource={() => setPendingSourceId(null)}
-        />
-        <ToastContainer />
-      </>
+    // key={currentStream.id} forces React to remount the editor when switching streams.
+    // This ensures TipTap reinitializes with the correct content and avoids stale doc state.
+    viewContent = (
+      <EditorComponent
+        key={currentStream.id}
+        stream={currentStream}
+        onBack={handleBackToList}
+        onDelete={handleDeleteStream}
+        onNavigateToStream={handleNavigateToStream}
+        pendingCellId={pendingCellId}
+        pendingSourceId={pendingSourceId}
+        onClearPendingCell={() => setPendingCellId(null)}
+        onClearPendingSource={() => setPendingSourceId(null)}
+      />
     );
-  }
-
-  return (
-    <>
+  } else {
+    viewContent = (
       <StreamListView
         streams={streams}
         isLoading={isLoading}
@@ -173,7 +171,13 @@ export function App() {
         onCreate={handleCreateStream}
         onSettings={handleOpenSettings}
       />
-      <ToastContainer />
+    );
+  }
+
+  return (
+    <>
+      {viewContent}
+      <ToastStack />
     </>
   );
 }

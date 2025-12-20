@@ -2,14 +2,52 @@
 
 macOS research app: Swift backend + React/TipTap frontend in WKWebView + global Quick Panel.
 
-## Research Requirement
+## CRITICAL: Working Practices
 
-**Before writing or modifying any library-based code** (TipTap, Zustand, GRDB, SwiftUI, WKWebView APIs, etc.), you MUST search the web for current documentation and best practices. Libraries evolve rapidly — do not rely on training data. Verify API signatures, check for deprecations, and confirm the idiomatic approach for 2025. This applies especially to:
-- TipTap extensions and markdown handling
-- Zustand store patterns and middleware
-- GRDB migrations and async patterns
-- WKWebView/WebKit bridge APIs
-- SwiftUI state management and lifecycle
+**These rules override default behavior. Follow them exactly.**
+
+### Before Any Implementation
+
+1. **Restate the requirement in your own words** and get explicit confirmation before writing code
+2. **Ask clarifying questions** if there is ANY ambiguity about what is being requested
+3. **Distinguish between** what the user said vs what you interpreted vs what you assume
+4. **If a task seems straightforward, be MORE suspicious** — that's when misunderstandings happen
+
+### During Implementation
+
+1. **Work in small, verifiable increments** — commit and test frequently
+2. **Stop and ask** if scope expands or you encounter unexpected complexity
+3. **Do not "improve" or add features** beyond what was explicitly requested
+4. **If you're uncertain, say so** — don't paper over uncertainty with code
+
+### After Implementation
+
+1. **Describe what you built** in plain terms — does it match what was asked?
+2. **Identify what you did NOT implement** — make omissions explicit
+3. **Ask the user to verify** before moving on
+
+### Collaboration with GPT-5.2
+
+For non-trivial work:
+- Ask GPT-5.2 for blast radius analysis and edge cases BEFORE starting
+- Ask GPT-5.2 to review diffs AFTER each change
+- If GPT-5.2 flags a concern, address it before continuing
+
+### Commit Approval Workflow
+
+**DO NOT COMMIT until GPT approves the change.**
+
+After completing a slice/task, provide a comprehensive summary that includes:
+
+1. **What was built** — Files created/modified, their purpose, key implementation details
+2. **Schema/architecture decisions** — Any structural choices and why
+3. **What was NOT built** — Explicit list of deferred functionality
+4. **How it integrates** — How new code connects to existing systems
+5. **Testing instructions** — How to verify the change works
+6. **Risks/concerns** — Anything that might break or needs attention
+7. **Code snippets** — Key code sections for review (not just file names)
+
+The user will share this summary with GPT for review. Only commit after approval.
 
 ## Commands
 
@@ -61,20 +99,27 @@ cd Web && npm run typecheck
 | `Services/AssetService.swift` | Local image storage in `~/.config/ticker/assets/` |
 | `Services/RetrievalService.swift` | RAG — semantic search over sources |
 | `Services/EmbeddingService.swift` | Local embeddings via MLX |
-| `Models/Cell.swift` | Cell with modifiers, versions, processing config |
+| `Models/Cell.swift` | Cell with modifiers, processing config |
 
 ### Web (`Web/src/`)
 
 | File | Purpose |
 |------|---------|
-| `App.tsx` | Root — stream loading, layout |
-| `components/StreamEditor.tsx` | Main editor surface |
-| `components/BlockWrapper.tsx` | Cell chrome — hover controls, drag handle |
-| `components/CellEditor.tsx` | TipTap editor wrapper |
+| `App.tsx` | Root — stream loading, layout, toast display |
+| `components/UnifiedStreamEditor.tsx` | **Main editor** — single TipTap instance for cross-cell selection |
+| `components/StreamEditor.tsx` | Legacy editor (fallback via Settings or `?unified=false`) |
+| `components/CellOverlay.tsx` | AI cell info overlay — regenerate, model, live toggle |
 | `components/SidePanel.tsx` | Tabbed sidebar — outline + sources |
 | `components/SearchModal.tsx` | Cmd+K hybrid search |
-| `store/blockStore.ts` | Zustand — cells, streaming state, errors |
+| `components/ToastStack.tsx` | Error/info toast notifications |
+| `extensions/CellBlock.ts` | TipTap node — `cellBlock` with `block+` content |
+| `extensions/CellBlockView.tsx` | React NodeView — cell chrome, drag handle, streaming indicator |
+| `extensions/CellKeymap.ts` | Enter/Backspace/Arrow boundary rules |
+| `extensions/CellClipboard.ts` | Cross-cell copy/paste handling |
+| `store/blockStore.ts` | Zustand — cells, streaming state, errors, overlay |
+| `store/toastStore.ts` | Zustand — toast notification state |
 | `hooks/useBridgeMessages.ts` | Handles all bridge messages from Swift |
+| `utils/featureFlags.ts` | Runtime flags (unified editor default ON) |
 | `utils/markdown.ts` | Markdown → sanitized HTML (DOMPurify) |
 | `types/` | TypeScript types and bridge message definitions |
 
@@ -83,10 +128,22 @@ cd Web && npm run typecheck
 - **Stream**: Research session with cells and source references
 - **Cell**: Content block (`text`, `aiResponse`, `quote`)
   - `modifiers`: Transformation chain (e.g., "make shorter")
-  - `versions`: Content snapshots from modifier applications
   - `originalPrompt`: User's input (for AI response cells)
   - `sourceApp`: Origin app name (for quote cells from Quick Panel)
+  - `processingConfig`: Live block settings (refresh triggers)
 - **SourceReference**: Attached file with extracted text, embeddings
+
+## Editor Architecture
+
+The app uses a **unified editor** — a single TipTap instance for the entire stream:
+
+- **Schema**: `doc -> cellBlock+`, where `cellBlock -> block+` (rich content)
+- **Cross-cell selection**: Native ProseMirror selection spans multiple cells
+- **Cell identity**: UUID-based (`data-cell-id` attribute), never positional
+- **Data flow**: TipTap → Store → Persistence (one direction during editing)
+- **External updates** (AI complete, Quick Panel): Write TO TipTap, then normal flow resumes
+
+Legacy editor remains available via Settings toggle or `?unified=false` URL param.
 
 ## Quick Panel
 
@@ -109,21 +166,6 @@ Global capture panel accessible via **Cmd+L** from any app. Captures selected te
 - Default: Most recently modified stream
 - After 15min idle: Show stream picker
 - No streams: Create "Untitled"
-
-**Reference Implementation:** See `/Users/niko/Documents/ITP/ChatWindow/` for patterns (HotkeyService, SelectionReaderService, QuickPanelManager)
-
-## Known Technical Debt
-
-### MAJOR: Markdown-first editing (not yet implemented)
-Currently cells store rendered HTML and TipTap edits the rich text directly. This means users cannot edit the underlying markdown source (e.g., change `## Header` to `### Header`).
-
-**Required refactor:**
-- Store raw markdown as the source of truth, not HTML
-- Render markdown → HTML only for display
-- TipTap edits should produce markdown, not HTML
-- Consider CodeMirror/Monaco for true markdown editing, or TipTap with markdown storage
-
-This is a fundamental architecture change affecting: `CellEditor.tsx`, `markdownToHtml()`, cell persistence, AI response handling.
 
 ## Code Standards
 

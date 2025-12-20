@@ -57,6 +57,33 @@ final class PerplexityService: LLMProvider {
             }
         }
 
+        // Perplexity requires the first non-system message to be a user/tool message.
+        // If our history starts with an assistant response (e.g., the first cell is AI),
+        // rewrite it into a user-context message to satisfy the alternation rule.
+        if messages.count > 1, messages[1]["role"] == "assistant" {
+            let assistantContent = messages[1]["content"] ?? ""
+            messages[1]["role"] = "user"
+            messages[1]["content"] = "Context from previous assistant response:\n\n\(assistantContent)"
+        }
+
+        // Normalize the message list after any rewrites to ensure user/assistant alternation.
+        // This merges adjacent messages with the same role (non-system) so Perplexity accepts it.
+        if messages.count > 2 {
+            var normalized: [[String: String]] = [messages[0]]
+            for i in 1..<messages.count {
+                let current = messages[i]
+                if let last = normalized.last,
+                   last["role"] == current["role"],
+                   current["role"] != "system" {
+                    let merged = (last["content"] ?? "") + "\n\n" + (current["content"] ?? "")
+                    normalized[normalized.count - 1]["content"] = merged
+                } else {
+                    normalized.append(current)
+                }
+            }
+            messages = normalized
+        }
+
         var requestBody: [String: Any] = [
             "model": model,
             "messages": messages,
@@ -108,19 +135,29 @@ final class PerplexityService: LLMProvider {
             }
 
             for try await line in bytes.lines {
-                if line.hasPrefix("data: ") {
-                    let jsonString = String(line.dropFirst(6))
+                let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmed.hasPrefix("data:") else { continue }
 
-                    if jsonString == "[DONE]" {
-                        await MainActor.run { onComplete() }
-                        return
-                    }
+                let jsonString = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
 
-                    if let jsonData = jsonString.data(using: .utf8),
-                       let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                       let choices = json["choices"] as? [[String: Any]],
-                       let delta = choices.first?["delta"] as? [String: Any],
-                       let content = delta["content"] as? String {
+                if jsonString == "[DONE]" {
+                    await MainActor.run { onComplete() }
+                    return
+                }
+
+                if let jsonData = jsonString.data(using: .utf8),
+                   let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                   let choices = json["choices"] as? [[String: Any]],
+                   let firstChoice = choices.first {
+                    // Perplexity can stream content under different keys depending on model/version.
+                    let delta = firstChoice["delta"] as? [String: Any]
+                    let message = firstChoice["message"] as? [String: Any]
+                    let content =
+                        (delta?["content"] as? String) ??
+                        (message?["content"] as? String) ??
+                        (firstChoice["text"] as? String)
+
+                    if let content {
                         await MainActor.run { onChunk(content) }
                     }
                 }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, forwardRef, useMemo } from 'react';
 import { Cell, CellType, SourceReference, bridge } from '../types';
+import { useToastStore } from '../store/toastStore';
 
 type Tab = 'outline' | 'sources';
 
@@ -33,6 +34,7 @@ export function SidePanel({
   const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const sourceRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const addToast = useToastStore((state) => state.addToast);
 
   // Filter out empty cells from outline
   const outlineCells = useMemo(() => {
@@ -62,6 +64,8 @@ export function SidePanel({
   const showError = (message: string) => {
     setError(message);
     setTimeout(() => setError(null), 5000);
+    // Surface source errors globally so they're visible even when the panel is collapsed.
+    addToast(message, 'error');
   };
 
   // Drag and drop handlers
@@ -211,6 +215,43 @@ interface OutlineContentProps {
 }
 
 function OutlineContent({ cells, focusedCellId, onCellClick }: OutlineContentProps) {
+  const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const scrollTimeoutRef = useRef<number | null>(null);
+
+  // Scroll focused cell into view (debounced to avoid scroll jank during rapid navigation)
+  useEffect(() => {
+    if (!focusedCellId) return;
+
+    // Clear any pending scroll
+    if (scrollTimeoutRef.current !== null) {
+      window.clearTimeout(scrollTimeoutRef.current);
+    }
+
+    // Debounce: wait for focus to settle before scrolling
+    scrollTimeoutRef.current = window.setTimeout(() => {
+      scrollTimeoutRef.current = null;
+      const el = itemRefs.current.get(focusedCellId);
+      if (el) {
+        // Only scroll if element is not already visible
+        const rect = el.getBoundingClientRect();
+        const container = el.closest('.side-panel-list');
+        if (container) {
+          const containerRect = container.getBoundingClientRect();
+          const isVisible = rect.top >= containerRect.top && rect.bottom <= containerRect.bottom;
+          if (!isVisible) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+      }
+    }, 150);
+
+    return () => {
+      if (scrollTimeoutRef.current !== null) {
+        window.clearTimeout(scrollTimeoutRef.current);
+      }
+    };
+  }, [focusedCellId]);
+
   if (cells.length === 0) {
     return <p className="side-panel-empty">No content yet</p>;
   }
@@ -223,6 +264,10 @@ function OutlineContent({ cells, focusedCellId, onCellClick }: OutlineContentPro
           cell={cell}
           isActive={cell.id === focusedCellId}
           onClick={() => onCellClick(cell.id)}
+          ref={(el) => {
+            if (el) itemRefs.current.set(cell.id, el);
+            else itemRefs.current.delete(cell.id);
+          }}
         />
       ))}
     </div>
@@ -235,29 +280,32 @@ interface OutlineItemProps {
   onClick: () => void;
 }
 
-function OutlineItem({ cell, isActive, onClick }: OutlineItemProps) {
-  const icon = getCellIcon(cell.type);
-  const title = useMemo(() => getCellTitle(cell), [cell]);
-  const isLive = cell.processingConfig?.refreshTrigger === 'onStreamOpen';
-  const hasDependencies = cell.processingConfig?.refreshTrigger === 'onDependencyChange';
+const OutlineItem = forwardRef<HTMLButtonElement, OutlineItemProps>(
+  function OutlineItem({ cell, isActive, onClick }, ref) {
+    const icon = getCellIcon(cell.type);
+    const title = useMemo(() => getCellTitle(cell), [cell]);
+    const isLive = cell.processingConfig?.refreshTrigger === 'onStreamOpen';
+    const hasDependencies = cell.processingConfig?.refreshTrigger === 'onDependencyChange';
 
-  return (
-    <button
-      className={`side-panel-item side-panel-item--outline ${isActive ? 'side-panel-item--active' : ''}`}
-      onClick={onClick}
-      title={title}
-    >
-      <span className="side-panel-item-icon">{icon}</span>
-      <span className="side-panel-item-text">{title}</span>
-      {(isLive || hasDependencies) && (
-        <span className="side-panel-item-badges">
-          {isLive && <span className="side-panel-badge" title="Live block">⚡</span>}
-          {hasDependencies && <span className="side-panel-badge" title="Has dependencies">🔗</span>}
-        </span>
-      )}
-    </button>
-  );
-}
+    return (
+      <button
+        ref={ref}
+        className={`side-panel-item side-panel-item--outline ${isActive ? 'side-panel-item--active' : ''}`}
+        onClick={onClick}
+        title={title}
+      >
+        <span className="side-panel-item-icon">{icon}</span>
+        <span className="side-panel-item-text">{title}</span>
+        {(isLive || hasDependencies) && (
+          <span className="side-panel-item-badges">
+            {isLive && <span className="side-panel-badge" title="Live block">⚡</span>}
+            {hasDependencies && <span className="side-panel-badge" title="Has dependencies">🔗</span>}
+          </span>
+        )}
+      </button>
+    );
+  }
+);
 
 // Sources tab content
 interface SourcesContentProps {

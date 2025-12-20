@@ -117,7 +117,7 @@ body {
 /* ==================== Stream List ==================== */
 
 .stream-list {
-  padding: var(--spacing-xxl) var(--spacing-xl);
+  padding: var(--spacing-xl) var(--spacing-xl);
   max-width: 600px;
   margin: 0 auto;
   width: 100%;
@@ -490,6 +490,7 @@ body {
 .stream-content {
   flex: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xxl) var(--spacing-xxl);
 }
 
@@ -651,6 +652,10 @@ body {
 }
 
 .cell:hover .cell-meta-badge {
+  opacity: 1;
+}
+
+.cell-block-wrapper:hover .cell-meta-badge {
   opacity: 1;
 }
 
@@ -2177,85 +2182,6 @@ body {
   }
 }
 
-/* ==================== Version Dropdown ==================== */
-
-.version-dropdown {
-  position: relative;
-  display: inline-block;
-}
-
-.version-dropdown-trigger {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-xs);
-  font-family: 'SF Mono', monospace;
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
-
-.version-dropdown-trigger:hover {
-  border-color: var(--color-text-tertiary);
-  color: var(--color-text-secondary);
-}
-
-.version-dropdown-menu {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  margin-top: var(--spacing-xs);
-  background: var(--color-bg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
-  min-width: 120px;
-  z-index: 100;
-  overflow: hidden;
-}
-
-.version-dropdown-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  width: 100%;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background: transparent;
-  border: none;
-  font: inherit;
-  font-size: var(--font-size-sm);
-  color: var(--color-text);
-  cursor: pointer;
-  text-align: left;
-  transition: background-color 0.1s ease;
-}
-
-.version-dropdown-item:hover {
-  background: var(--color-surface);
-}
-
-.version-dropdown-item--active {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-
-.version-dropdown-item--active:hover {
-  background: var(--color-accent-soft);
-}
-
-.version-dropdown-item-label {
-  font-family: 'SF Mono', monospace;
-  font-weight: 500;
-}
-
-.version-dropdown-item-time {
-  font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
-}
-
 /* ==================== Cell Overlay ==================== */
 
 .cell-overlay {
@@ -2510,6 +2436,7 @@ body {
   color: var(--color-accent);
 }
 
+
 /* ==================== Appearance Settings ==================== */
 
 .settings-appearance-options {
@@ -2642,143 +2569,353 @@ body {
   .settings-appearance-btn {
     background: var(--color-surface);
   }
+
+  .cell-block-wrapper--hovered .cell-block-content {
+    background: rgba(255, 255, 255, 0.02);
+  }
 }
 
-/* ==================== Toast Notifications ==================== */
+/* ============================================
+   UNIFIED EDITOR STYLES (Slice 01+)
+   ============================================ */
 
-.toast-container {
-  position: fixed;
-  bottom: var(--spacing-lg);
-  right: var(--spacing-lg);
+.unified-editor-container {
+  padding: var(--spacing-lg);
+}
+
+.unified-editor-content {
+  max-width: 720px;
+  margin: 0 auto;
+  /* Left padding to prevent hover controls (left: -36px) from being clipped */
+  padding-left: 40px;
+}
+
+/* Cell Block Wrapper - similar to block-wrapper */
+.cell-block-wrapper {
+  position: relative;
+  margin: 0 auto;
+  max-width: 720px;
+}
+
+.cell-block-wrapper + .cell-block-wrapper {
+  margin-top: 2px;
+}
+
+.cell-block-wrapper--hovered .cell-block-content {
+  background: rgba(0, 0, 0, 0.015);
+}
+
+/* Cell Block Controls - appear on hover, left side */
+.cell-block-controls {
+  position: absolute;
+  left: -36px;
+  top: 8px;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm);
-  z-index: 10000;
-  pointer-events: none;
-}
-
-.toast {
-  display: flex;
   align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-md);
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  min-width: 280px;
-  max-width: 400px;
-  pointer-events: auto;
-  animation: toast-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
 }
 
-@keyframes toast-enter {
-  from {
-    opacity: 0;
-    transform: translateX(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+.cell-block-controls--visible {
+  opacity: 1;
 }
 
-.toast-icon {
+.cell-block-info-button {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 600;
-  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
 }
 
-.toast-success .toast-icon {
-  background: rgba(22, 163, 74, 0.15);
-  color: var(--color-success);
-}
-
-.toast-error .toast-icon {
-  background: rgba(220, 38, 38, 0.15);
-  color: var(--color-error);
-}
-
-.toast-info .toast-icon {
-  background: rgba(37, 99, 235, 0.15);
+.cell-block-info-button:hover {
+  background: var(--color-surface-hover);
   color: var(--color-accent);
 }
 
-.toast-warning .toast-icon {
-  background: rgba(202, 138, 4, 0.15);
-  color: var(--color-warning);
+.cell-block-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: grab;
+  border-radius: var(--radius-sm);
+  transition: all 0.1s ease;
 }
 
-.toast-content {
-  flex: 1;
+.cell-block-drag-handle:hover {
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.cell-block-indicator {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.cell-block-indicator--live {
+  color: var(--color-accent);
+}
+
+.cell-block-indicator--dependent {
+  color: var(--color-text-secondary);
+}
+
+.cell-block-indicator--streaming {
+  display: flex;
+  align-items: center;
+  color: var(--color-accent);
+}
+
+.cell-block-spinner {
+  animation: spin 1s linear infinite;
+}
+
+/* Streaming state - show subtle background */
+.cell-block-wrapper--streaming {
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+}
+
+/* Thinking window - blurred scrolling pseudo-text during AI streaming */
+.thinking-window {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: var(--radius-sm);
+  /* Gradient mask for fade-out at top and bottom */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 20%,
+    black 80%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    black 20%,
+    black 80%,
+    transparent 100%
+  );
+}
+
+.thinking-window-scroll {
+  animation: thinking-scroll 12s linear infinite;
+  filter: blur(5px);
+  opacity: 0.4;
+  color: var(--color-text-secondary);
+  padding: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  line-height: 1.8;
+}
+
+.thinking-window-line {
+  margin: 0 0 var(--spacing-sm) 0;
+}
+
+@keyframes thinking-scroll {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(-50%);
+  }
+}
+
+/* Reduced motion fallback */
+.thinking-window-fallback {
+  display: none;
+  position: absolute;
+  inset: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.thinking-dots span {
+  animation: thinking-dot 1.4s infinite;
+  animation-fill-mode: both;
+}
+
+.thinking-dots span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dots span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-dot {
+  0%, 80%, 100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-window-scroll {
+    display: none;
+  }
+
+  .thinking-window-fallback {
+    display: flex;
+  }
+}
+
+/* Cell Block Content - the editable area */
+.cell-block-content {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-sm);
+  min-height: 1.6em;
+}
+
+.cell-block-content p {
+  margin: 0;
+}
+
+.cell-block-content p + p {
+  margin-top: 0.5em;
+}
+
+/* Drag reorder polish */
+.is-cell-dragging {
+  user-select: none;
+  cursor: grabbing !important;
+}
+
+.is-cell-dragging * {
+  cursor: grabbing !important;
+}
+
+.cell-block-wrapper--drag-target {
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-sm);
+}
+
+.cell-block-wrapper--dragging {
+  opacity: 0.5;
+}
+
+/* ==================== Toasts ==================== */
+
+.toast-stack {
+  position: fixed;
+  right: var(--spacing-lg);
+  bottom: var(--spacing-lg);
+  z-index: 9999;
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-xs);
-  min-width: 0;
+  gap: var(--spacing-sm);
+  max-width: 360px;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.12);
+  color: var(--color-text);
+}
+
+.toast[data-kind='error'] {
+  border-left-color: var(--color-error);
+}
+
+.toast[data-kind='warning'] {
+  border-left-color: var(--color-warning);
+}
+
+.toast[data-kind='info'] {
+  border-left-color: var(--color-accent);
+}
+
+.toast[data-kind='success'] {
+  border-left-color: var(--color-success);
 }
 
 .toast-message {
+  flex: 1;
   font-size: var(--font-size-sm);
-  color: var(--color-text);
-  line-height: 1.4;
+  line-height: var(--line-height-normal);
 }
 
-.toast-action {
-  background: transparent;
-  border: none;
-  padding: 0;
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: var(--color-accent);
-  cursor: pointer;
-  align-self: flex-start;
-}
-
-.toast-action:hover {
-  text-decoration: underline;
-}
-
-.toast-dismiss {
-  background: transparent;
-  border: none;
-  padding: var(--spacing-xs);
-  color: var(--color-text-tertiary);
-  cursor: pointer;
-  font-size: 12px;
-  line-height: 1;
-  border-radius: var(--radius-sm);
+.toast-actions {
+  display: flex;
+  gap: var(--spacing-xs);
   flex-shrink: 0;
 }
 
-.toast-dismiss:hover {
-  color: var(--color-text);
+.toast-copy {
+  border: 1px solid var(--color-border);
   background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--spacing-sm);
+  height: 24px;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
 }
 
-/* ==================== Markdown Editor (CodeMirror) ==================== */
-
-.markdown-editor {
-  min-height: 1.5em;
+.toast-copy:hover {
+  background: var(--color-surface-active);
+  color: var(--color-text);
 }
 
-.markdown-editor .cm-editor {
-  background: transparent;
+.toast-dismiss {
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  line-height: 1;
 }
 
-.markdown-editor .cm-gutters {
-  display: none;
+.toast-dismiss:hover {
+  background: var(--color-surface-active);
+  color: var(--color-text);
 }
 
-.markdown-editor .cm-activeLineGutter {
-  background: transparent;
+.toast-clear-all {
+  align-self: flex-end;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  margin-bottom: var(--spacing-xs);
 }
 
-.markdown-editor .cm-activeLine {
-  background: transparent;
+.toast-clear-all:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
 }

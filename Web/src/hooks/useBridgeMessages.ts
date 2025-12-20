@@ -1,34 +1,428 @@
-import { useState, useEffect } from 'react';
-import { SourceReference } from '../types';
-import { useAIStreaming } from './useAIStreaming';
-import { useModifierStreaming } from './useModifierStreaming';
-import { useBlockRefresh } from './useBlockRefresh';
-import { useSourceSync } from './useSourceSync';
-import { useQuickPanelSync } from './useQuickPanelSync';
+import { useState, useEffect, useRef } from 'react';
+import { SourceReference, Modifier, Cell, bridge } from '../types';
+import { markdownToHtml } from '../utils/markdown';
+import { useBlockStore } from '../store/blockStore';
+import { useToastStore } from '../store/toastStore';
+
+/**
+ * EditorAPI - allows useBridgeMessages to update the TipTap document
+ * when AI completes or content needs to be inserted.
+ */
+export interface EditorAPI {
+  /** Replace the HTML content of a cell in the TipTap document */
+  replaceCellHtml: (cellId: string, html: string) => void;
+  /** Insert new cells into the TipTap document (for Quick Panel) */
+  insertCells?: (cells: Cell[]) => void;
+  /** Insert an image at the current cursor position */
+  insertImage?: (imageUrl: string) => void;
+}
 
 interface UseBridgeMessagesOptions {
   streamId: string;
   initialSources: SourceReference[];
+  /** Optional EditorAPI for updating TipTap document in unified editor mode */
+  editorAPI?: EditorAPI | null;
 }
 
 /**
  * Orchestrator hook that composes all bridge message handlers
  * Each sub-hook handles a specific domain of messages
  */
-export function useBridgeMessages({ streamId, initialSources }: UseBridgeMessagesOptions) {
+export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBridgeMessagesOptions) {
   const [sources, setSources] = useState<SourceReference[]>(initialSources);
+
+  // Keep editorAPI in a ref so the effect doesn't re-run when it changes
+  const editorAPIRef = useRef<EditorAPI | null>(null);
+  editorAPIRef.current = editorAPI ?? null;
 
   // Update sources when initialSources changes (stream switch)
   useEffect(() => {
     setSources(initialSources);
   }, [initialSources]);
 
-  // Compose all sub-hooks
-  useAIStreaming({ streamId });
-  useModifierStreaming({ streamId });
-  useBlockRefresh({ streamId });
-  useSourceSync({ streamId, setSources });
-  useQuickPanelSync({ streamId });
+  useEffect(() => {
+    console.log('[useBridgeMessages] Setting up message handler for streamId:', streamId);
+
+    const unsubscribe = bridge.onMessage((message) => {
+      try {
+      // Debug: log all messages to see what's coming through
+      console.log('[useBridgeMessages] Received:', message.type);
+
+      // IMPORTANT: Don't subscribe to the zustand store from this hook.
+      // UnifiedStreamEditor updates store on every keystroke; subscribing here would cause
+      // this effect to re-run and re-subscribe to the bridge constantly.
+      const store = useBlockStore.getState();
+      const toastStore = useToastStore.getState();
+
+      // Normalize unknown error payloads into a user-facing string.
+      const formatError = (value: unknown, fallback: string) =>
+        typeof value === 'string' && value.trim().length > 0 ? value : fallback;
+
+      // Source updates
+      if (message.type === 'sourceAdded' && message.payload?.source) {
+        const source = message.payload.source as SourceReference;
+        if (source.streamId === streamId) {
+          setSources(prev => [...prev, source]);
+        }
+      }
+      if (message.type === 'sourceRemoved' && message.payload?.id) {
+        setSources(prev => prev.filter(s => s.id !== message.payload?.id));
+      }
+
+      // Quick Panel: cells added via global hotkey capture
+      if (message.type === 'quickPanelCellsAdded' && message.payload?.cells) {
+        const addedStreamId = message.payload.streamId as string;
+        const cells = message.payload.cells as Cell[];
+        const triggerAI = message.payload.triggerAI as string | undefined;
+
+        console.log('[QuickPanel] Cells added:', { streamId: addedStreamId, cellCount: cells.length, triggerAI });
+
+        // Only process if this is for the current stream
+        if (addedStreamId === streamId) {
+          // In unified editor mode, use insertCells to update both TipTap and store
+          if (editorAPIRef.current?.insertCells) {
+            console.log('[QuickPanel] Using insertCells for unified editor');
+            editorAPIRef.current.insertCells(cells);
+          } else {
+            // Legacy mode: add each cell to the store directly
+            for (const cell of cells) {
+              store.addBlock({
+                id: cell.id,
+                streamId: cell.streamId,
+                content: cell.content,
+                type: cell.type,
+                order: cell.order,
+                sourceBinding: cell.sourceBinding || null,
+                originalPrompt: cell.originalPrompt,
+                references: cell.references,
+                sourceApp: cell.sourceApp,
+                createdAt: cell.createdAt || new Date().toISOString(),
+                updatedAt: cell.updatedAt || new Date().toISOString(),
+              });
+            }
+          }
+
+          // If triggerAI is set, start AI streaming for that cell
+          if (triggerAI) {
+            const aiCell = cells.find(c => c.id === triggerAI);
+            if (aiCell) {
+              console.log('[QuickPanel] Triggering AI for cell:', triggerAI);
+              store.startStreaming(triggerAI);
+
+              // Get prior cells for context (exclude the AI cell itself)
+              const priorCells = store.blockOrder
+                .map(id => store.getBlock(id))
+                .filter((b): b is NonNullable<typeof b> => b !== undefined && b.id !== triggerAI)
+                .map(b => ({
+                  content: b.content,
+                  type: b.type,
+                }));
+
+              // Get referenced content (e.g., the quote cell from Quick Panel)
+              // This is the highlighted text/screenshot that the user is asking about
+              let referencedContent: string | undefined;
+              let referencedImageURLs: string[] = [];
+              if (aiCell.references && aiCell.references.length > 0) {
+                const refCell = cells.find(c => c.id === aiCell.references?.[0]);
+                if (refCell) {
+                  referencedContent = refCell.content;
+                  // Extract image URLs from referenced content
+                  const imgMatches = refCell.content.matchAll(/<img[^>]+src="([^"]+)"/g);
+                  for (const match of imgMatches) {
+                    if (match[1]) {
+                      referencedImageURLs.push(match[1]);
+                    }
+                  }
+                }
+              }
+
+              // Send think request to Swift
+              bridge.send({
+                type: 'think',
+                payload: {
+                  cellId: triggerAI,
+                  currentCell: aiCell.originalPrompt || '',
+                  referencedContent,  // The quote/screenshot the user selected
+                  referencedImageURLs, // Image URLs from the referenced cell
+                  priorCells,
+                  streamId,
+                },
+              });
+            }
+          }
+        }
+      }
+
+      // Request for current stream ID (for native file drops)
+      if (message.type === 'requestCurrentStreamId') {
+        console.log('[Bridge] requestCurrentStreamId, responding with:', streamId);
+        bridge.send({
+          type: 'currentStreamId',
+          payload: { streamId }
+        });
+      }
+
+      // Image dropped via native drag-and-drop
+      if (message.type === 'imageDropped') {
+        console.log('[useBridgeMessages] imageDropped payload:', JSON.stringify(message.payload));
+        if (message.payload?.assetUrl) {
+          const assetUrl = message.payload.assetUrl as string;
+
+          // In unified editor mode, insert via TipTap (handleUpdate will sync and persist)
+          if (editorAPIRef.current?.insertImage) {
+            console.log('[useBridgeMessages] Using insertImage for unified editor:', assetUrl);
+            editorAPIRef.current.insertImage(assetUrl);
+          } else {
+            // Legacy mode: update store directly and persist
+            const { focusedBlockId, blockOrder } = store;
+            console.log('[useBridgeMessages] Legacy mode inserting image:', assetUrl, 'focusedBlock:', focusedBlockId);
+
+            store.insertImageInFocusedBlock(assetUrl);
+
+            // Save the updated block to persist the image reference
+            // insertImageInFocusedBlock uses focusedBlockId or falls back to last block
+            const targetBlockId = focusedBlockId || blockOrder[blockOrder.length - 1];
+            const block = store.getBlock(targetBlockId);
+            if (block) {
+              bridge.send({
+                type: 'saveCell',
+                payload: {
+                  id: block.id,
+                  streamId,
+                  content: block.content,
+                  type: block.type,
+                  order: block.order,
+                  sourceApp: block.sourceApp,
+                  references: block.references,
+                },
+              });
+            }
+          }
+        } else {
+          console.warn('[useBridgeMessages] imageDropped but no assetUrl in payload');
+        }
+      }
+
+      // AI streaming updates
+      if (message.type === 'aiChunk' && message.payload?.cellId && message.payload?.chunk) {
+        const cellId = message.payload.cellId as string;
+        const chunk = message.payload.chunk as string;
+        store.appendStreamingContent(cellId, chunk);
+      }
+
+      if (message.type === 'aiComplete' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const rawContent = store.getStreamingContent(cellId) || '';
+        const preservedImages = store.getPreservedImages(cellId) || '';
+        const htmlContent = markdownToHtml(rawContent);
+
+        // Combine preserved images with AI response
+        const finalContent = preservedImages + htmlContent;
+
+        // Update cell with final content
+        const cell = store.getBlock(cellId);
+        if (cell) {
+          store.updateBlock(cellId, { content: finalContent });
+
+          // Update TipTap document if editorAPI is available (unified editor mode)
+          if (editorAPIRef.current) {
+            console.log('[useBridgeMessages] aiComplete: updating TipTap document for cell:', cellId);
+            editorAPIRef.current.replaceCellHtml(cellId, finalContent);
+          }
+
+          // Save to Swift (include modelId if set, preserve sourceApp and references)
+          bridge.send({
+            type: 'saveCell',
+            payload: {
+              id: cellId,
+              streamId,
+              content: finalContent,
+              type: 'aiResponse',
+              order: cell.order,
+              originalPrompt: cell.originalPrompt,
+              modelId: cell.modelId,
+              sourceApp: cell.sourceApp,
+              references: cell.references,
+            },
+          });
+        }
+
+        store.completeStreaming(cellId);
+      }
+
+      if (message.type === 'aiError' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const error = formatError(message.payload.error, 'AI request failed.');
+        toastStore.addToast(error, 'error');
+        store.setError(cellId, error);
+        store.completeStreaming(cellId);
+      }
+
+      // Model selection (sent before streaming starts)
+      if (message.type === 'modelSelected' && message.payload?.cellId && message.payload?.modelId) {
+        const cellId = message.payload.cellId as string;
+        const modelId = message.payload.modelId as string;
+        store.updateBlock(cellId, { modelId });
+      }
+
+      // Restatement updates (heading form of original prompt)
+      if (message.type === 'restatementGenerated' && message.payload?.cellId && message.payload?.restatement) {
+        const cellId = message.payload.cellId as string;
+        const restatement = message.payload.restatement as string;
+        store.updateBlock(cellId, { restatement });
+      }
+
+      // Modifier streaming updates
+      if (message.type === 'modifierCreated' && message.payload?.cellId && message.payload?.modifier) {
+        const cellId = message.payload.cellId as string;
+        const modifier = message.payload.modifier as Modifier;
+        console.log('[Modifier] Created:', { cellId, modifier });
+
+        // Add the modifier to the cell
+        const cell = store.getBlock(cellId);
+        if (cell) {
+          const existingModifiers = cell.modifiers || [];
+          store.updateBlock(cellId, { modifiers: [...existingModifiers, modifier] });
+        }
+
+        // Update the tracking entry with the modifier ID
+        store.setModifierId(cellId, modifier.id);
+      }
+
+      if (message.type === 'modifierChunk' && message.payload?.cellId && message.payload?.chunk) {
+        const cellId = message.payload.cellId as string;
+        const chunk = message.payload.chunk as string;
+        console.log('[Modifier] Chunk:', { cellId, chunkLength: chunk.length });
+        store.appendModifyingContent(cellId, chunk);
+      }
+
+      if (message.type === 'modifierComplete' && message.payload?.cellId && message.payload?.modifierId) {
+        const cellId = message.payload.cellId as string;
+        const modifierId = message.payload.modifierId as string;
+        console.log('[Modifier] Complete:', { cellId, modifierId });
+
+        const modifyingData = store.getModifyingData(cellId);
+        if (!modifyingData) {
+          console.warn('[Modifier] Complete but no modifying data found for:', cellId);
+          return;
+        }
+
+        const rawContent = modifyingData.content;
+        const htmlContent = markdownToHtml(rawContent);
+
+        const cell = store.getBlock(cellId);
+        if (!cell) {
+          store.completeModifying(cellId);
+          return;
+        }
+
+        // Update block
+        store.updateBlock(cellId, {
+          content: htmlContent,
+        });
+
+        // Update TipTap document if editorAPI is available (unified editor mode)
+        if (editorAPIRef.current) {
+          console.log('[useBridgeMessages] modifierComplete: updating TipTap document for cell:', cellId);
+          editorAPIRef.current.replaceCellHtml(cellId, htmlContent);
+        }
+
+        // Save to Swift (preserve sourceApp and references)
+        bridge.send({
+          type: 'saveCell',
+          payload: {
+            id: cellId,
+            streamId,
+            content: htmlContent,
+            type: cell.type,
+            order: cell.order,
+            modifiers: cell.modifiers,
+            sourceApp: cell.sourceApp,
+            references: cell.references,
+          },
+        });
+
+        store.completeModifying(cellId);
+      }
+
+      if (message.type === 'modifierError' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const error = formatError(message.payload.error, 'Modifier request failed.');
+        toastStore.addToast(`Modifier failed: ${error}`, 'error');
+        store.setError(cellId, error);
+        store.completeModifying(cellId);
+      }
+
+      // Block refresh updates (live blocks, cascade updates)
+      if (message.type === 'blockRefreshStart' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        console.log('[BlockRefresh] Start:', cellId);
+        store.startRefreshing(cellId);
+      }
+
+      if (message.type === 'blockRefreshChunk' && message.payload?.cellId && message.payload?.chunk) {
+        const cellId = message.payload.cellId as string;
+        const chunk = message.payload.chunk as string;
+        store.appendRefreshingContent(cellId, chunk);
+      }
+
+      if (message.type === 'blockRefreshComplete' && message.payload?.cellId && message.payload?.content) {
+        const cellId = message.payload.cellId as string;
+        const rawContent = message.payload.content as string;
+        const htmlContent = markdownToHtml(rawContent);
+        console.log('[BlockRefresh] Complete:', cellId);
+
+        const cell = store.getBlock(cellId);
+        if (cell) {
+          store.updateBlock(cellId, { content: htmlContent });
+
+          // Update TipTap document if editorAPI is available (unified editor mode)
+          if (editorAPIRef.current) {
+            console.log('[useBridgeMessages] blockRefreshComplete: updating TipTap document for cell:', cellId);
+            editorAPIRef.current.replaceCellHtml(cellId, htmlContent);
+          }
+
+          // Save refreshed content to Swift (preserve all metadata)
+          bridge.send({
+            type: 'saveCell',
+            payload: {
+              id: cellId,
+              streamId,
+              content: htmlContent,
+              type: cell.type,
+              order: cell.order,
+              originalPrompt: cell.originalPrompt,
+              restatement: cell.restatement,
+              modelId: cell.modelId,
+              processingConfig: cell.processingConfig,
+              references: cell.references,
+              blockName: cell.blockName,
+              sourceApp: cell.sourceApp,
+            },
+          });
+        }
+
+        store.completeRefreshing(cellId);
+      }
+
+      if (message.type === 'blockRefreshError' && message.payload?.cellId) {
+        const cellId = message.payload.cellId as string;
+        const error = formatError(message.payload.error, 'Refresh failed.');
+        console.error('[BlockRefresh] Error:', cellId, error);
+        toastStore.addToast(`Refresh failed: ${error}`, 'error');
+        store.setError(cellId, error);
+        store.completeRefreshing(cellId);
+      }
+      } catch (err) {
+        console.error('[useBridgeMessages] Error handling message:', message.type, err);
+      }
+    });
+
+    return () => {
+      console.log('[useBridgeMessages] Cleaning up message handler for streamId:', streamId);
+      unsubscribe();
+    };
+  }, [streamId]);
 
   return {
     sources,

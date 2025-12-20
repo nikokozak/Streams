@@ -37,6 +37,8 @@ interface BlockState {
   errorBlocks: Map<string, string>;
   focusedBlockId: string | null;
   newBlockId: string | null;
+  overlayCellId: string | null;
+  isReordering: boolean;
   pendingImage: { cellId: string; url: string; id: string } | null;
 }
 
@@ -80,6 +82,9 @@ interface BlockActions {
   // Focus management
   setFocus: (id: string | null) => void;
   setNewBlockId: (id: string | null) => void;
+  openOverlay: (cellId: string) => void;
+  closeOverlay: () => void;
+  setIsReordering: (isReordering: boolean) => void;
   focusNext: () => void;
   focusPrevious: () => void;
   insertImageInFocusedBlock: (imageUrl: string) => void;
@@ -112,6 +117,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   errorBlocks: new Map(),
   focusedBlockId: null,
   newBlockId: null,
+  overlayCellId: null,
+  isReordering: false,
   pendingImage: null,
 
   // Stream lifecycle
@@ -136,6 +143,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       errorBlocks: new Map(),
       focusedBlockId: null,
       newBlockId: null,
+      overlayCellId: null,
+      isReordering: false,
       pendingImage: null,
     });
   },
@@ -151,6 +160,8 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
       errorBlocks: new Map(),
       focusedBlockId: null,
       newBlockId: null,
+      overlayCellId: null,
+      isReordering: false,
       pendingImage: null,
     });
   },
@@ -342,6 +353,12 @@ export const useBlockStore = create<BlockStore>((set, get) => ({
   setFocus: (id) => set({ focusedBlockId: id }),
 
   setNewBlockId: (id) => set({ newBlockId: id }),
+
+  openOverlay: (cellId) => set({ overlayCellId: cellId }),
+
+  closeOverlay: () => set({ overlayCellId: null }),
+
+  setIsReordering: (isReordering) => set({ isReordering }),
 
   focusNext: () => {
     const { focusedBlockId, blockOrder } = get();

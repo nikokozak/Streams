@@ -1,72 +1,77 @@
 import { create } from 'zustand';
 
-export type ToastType = 'success' | 'error' | 'info' | 'warning';
+/**
+ * Global toast store for transient UI notifications (errors, warnings, info).
+ * This keeps toast state out of component trees and avoids prop-drilling.
+ */
+export type ToastKind = 'error' | 'warning' | 'info' | 'success';
 
 export interface Toast {
   id: string;
-  type: ToastType;
+  kind: ToastKind;
   message: string;
-  duration?: number;
-  action?: {
-    label: string;
-    onClick: () => void;
-  };
+  createdAt: number;
 }
 
 interface ToastState {
   toasts: Toast[];
-  addToast: (toast: Omit<Toast, 'id'>) => string;
+  addToast: (message: string, kind?: ToastKind, timeoutMs?: number) => string;
   removeToast: (id: string) => void;
-  clearAll: () => void;
+  clearToasts: () => void;
 }
 
-let toastId = 0;
+const DEFAULT_TIMEOUT_MS = 6000;
+/** Suppress duplicate toasts (same kind+message) within this window. */
+const DEDUPE_MS = 2000;
+/** Maximum number of toasts visible at once; oldest are dropped. */
+const MAX_TOASTS = 4;
 
-export const useToastStore = create<ToastState>((set) => ({
+export const useToastStore = create<ToastState>((set, get) => ({
   toasts: [],
 
-  addToast: (toast) => {
-    const id = `toast-${++toastId}`;
-    const duration = toast.duration ?? (toast.type === 'error' ? 6000 : 4000);
+  addToast: (message, kind = 'error', timeoutMs = DEFAULT_TIMEOUT_MS) => {
+    const { toasts } = get();
 
-    set((state) => ({
-      toasts: [...state.toasts, { ...toast, id }],
-    }));
+    // Dedupe: skip if the last toast has the same kind+message within the window.
+    if (toasts.length > 0) {
+      const last = toasts[toasts.length - 1];
+      if (last.kind === kind && last.message === message) {
+        if (Date.now() - last.createdAt < DEDUPE_MS) {
+          return last.id; // Return existing toast ID, don't add duplicate
+        }
+      }
+    }
 
-    // Auto-dismiss after duration
-    if (duration > 0) {
-      setTimeout(() => {
-        set((state) => ({
-          toasts: state.toasts.filter((t) => t.id !== id),
-        }));
-      }, duration);
+    const id = crypto.randomUUID();
+    const toast: Toast = {
+      id,
+      kind,
+      message,
+      createdAt: Date.now(),
+    };
+
+    set((state) => {
+      let newToasts = [...state.toasts, toast];
+      // Cap: drop oldest if exceeding max.
+      if (newToasts.length > MAX_TOASTS) {
+        newToasts = newToasts.slice(newToasts.length - MAX_TOASTS);
+      }
+      return { toasts: newToasts };
+    });
+
+    // Auto-dismiss by default to avoid stale toasts lingering.
+    if (timeoutMs > 0) {
+      window.setTimeout(() => {
+        get().removeToast(id);
+      }, timeoutMs);
     }
 
     return id;
   },
 
   removeToast: (id) => {
-    set((state) => ({
-      toasts: state.toasts.filter((t) => t.id !== id),
-    }));
+    set((state) => ({ toasts: state.toasts.filter((toast) => toast.id !== id) }));
   },
 
-  clearAll: () => {
-    set({ toasts: [] });
-  },
+  clearToasts: () => set({ toasts: [] }),
 }));
-
-// Convenience functions for easy toast creation
-export const toast = {
-  success: (message: string, options?: Partial<Omit<Toast, 'id' | 'type' | 'message'>>) =>
-    useToastStore.getState().addToast({ type: 'success', message, ...options }),
-
-  error: (message: string, options?: Partial<Omit<Toast, 'id' | 'type' | 'message'>>) =>
-    useToastStore.getState().addToast({ type: 'error', message, ...options }),
-
-  info: (message: string, options?: Partial<Omit<Toast, 'id' | 'type' | 'message'>>) =>
-    useToastStore.getState().addToast({ type: 'info', message, ...options }),
-
-  warning: (message: string, options?: Partial<Omit<Toast, 'id' | 'type' | 'message'>>) =>
-    useToastStore.getState().addToast({ type: 'warning', message, ...options }),
-};
