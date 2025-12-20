@@ -18,8 +18,11 @@ final class PersistenceService {
     }
 
     private static func databasePath() -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return "\(home)/.config/ticker/ticker.db"
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? fileManager.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        let tickerDir = appSupport.appendingPathComponent("Ticker", isDirectory: true)
+        return tickerDir.appendingPathComponent("ticker.db").path
     }
 
     // MARK: - Migrations
