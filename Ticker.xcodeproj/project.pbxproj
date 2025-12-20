@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		C1000001000000000001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000001 /* GRDB */; };
 		C1000001000000000002 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = D1000001000000000002 /* MLXLLM */; };
+		R1000001000000000001 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = F1000001000000000001 /* Resources */; };
 		A1000001000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000001 /* AppDelegate.swift */; };
 		A1000001000000000002 /* AssetSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000002 /* AssetSchemeHandler.swift */; };
 		A1000001000000000003 /* BridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000003 /* BridgeService.swift */; };
@@ -99,6 +100,7 @@
 		B1000001000000000028 /* HotkeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyService.swift; sourceTree = "<group>"; };
 		B1000001000000000029 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		B100000100000000002A /* SelectionReaderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionReaderService.swift; sourceTree = "<group>"; };
+		F1000001000000000001 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,6 +147,7 @@
 				G1000001000000000002 /* Design */,
 				G1000001000000000003 /* Models */,
 				G1000001000000000004 /* Services */,
+				F1000001000000000001 /* Resources */,
 				E8A1B2C3D4E5F6A7B8C9D0E2 /* Info.plist */,
 				E8A1B2C3D4E5F6A7B8C9D0E3 /* Ticker.entitlements */,
 			);
@@ -260,6 +263,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = E8A1B2C3D4E5F6A7B8C9D110 /* Build configuration list for PBXNativeTarget "Ticker" */;
 			buildPhases = (
+				S1000001000000000001 /* Build Web Assets */,
 				E8A1B2C3D4E5F6A7B8C9D0F0 /* Sources */,
 				E8A1B2C3D4E5F6A7B8C9D0F1 /* Frameworks */,
 				E8A1B2C3D4E5F6A7B8C9D0F2 /* Resources */,
@@ -319,10 +323,36 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				R1000001000000000001 /* Resources in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		S1000001000000000001 /* Build Web Assets */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Web/package-lock.json",
+				"$(SRCROOT)/Web/vite.config.ts",
+				"$(SRCROOT)/Web/tsconfig.json",
+			);
+			name = "Build Web Assets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Sources/Ticker/Resources/index.html",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cd \"$SRCROOT/Web\" && npm ci && npm run build\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		E8A1B2C3D4E5F6A7B8C9D0F0 /* Sources */ = {
@@ -511,6 +541,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				MARKETING_VERSION = 2025.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.ticker.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -526,6 +557,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Sources/Ticker/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
