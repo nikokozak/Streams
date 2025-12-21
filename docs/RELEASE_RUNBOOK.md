@@ -95,7 +95,7 @@ APP_PATH="/tmp/ticker-release-build/Build/Products/Release/Ticker.app"
 
 ```bash
 codesign --deep --force --verify --verbose \
-  --sign "Developer ID Application: YOUR_NAME (TEAM_ID)" \
+  --sign "Developer ID Application: Nikolai Kozak (Z5DX2YK8FA)" \
   --options runtime \
   "$APP_PATH"
 ```
