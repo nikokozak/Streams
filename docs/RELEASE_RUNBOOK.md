@@ -10,6 +10,13 @@ Step-by-step guide to release a new Ticker alpha build with Sparkle auto-updates
 - `gh` CLI authenticated (`gh auth login`)
 - Sparkle CLI tools (see below)
 
+## Important: update hosting must be public
+
+Sparkle must be able to download your update zip **without being logged in to GitHub**.
+
+- If this repo is **private**, GitHub Release asset URLs will work in your browser (logged in) but Sparkle will get 404.
+- Recommended setup: keep source repo private, but host updates in a separate **public** repo (e.g. `ticker-updates`) and point the appcast `<enclosure url="...">` at that repo’s Releases.
+
 ### Sparkle CLI Tools Setup (one-time)
 
 SPM provides the Sparkle framework, but release tools (`sign_update`, `generate_appcast`) should be downloaded separately:
@@ -34,6 +41,9 @@ Tools are now at `tools/sparkle/bin/sign_update` and `tools/sparkle/bin/generate
 ### GitHub Pages Setup (one-time)
 
 If not already done:
+
+> Recommended: use a separate worktree for `gh-pages` so you never mix source + appcast:
+> `git worktree add ../Streams-gh-pages gh-pages`
 
 ```bash
 # Create orphan gh-pages branch
@@ -70,7 +80,8 @@ Verify: `https://nikokozak.github.io/Streams/appcast-alpha.xml` should return th
 Edit `Ticker.xcodeproj/project.pbxproj`:
 - `MARKETING_VERSION` → `YYYY.MM.patch` (e.g., `2025.12.1`)
 
-The build number (`CURRENT_PROJECT_VERSION`) is set automatically from git commit count.
+The build number (`CURRENT_PROJECT_VERSION`) is set automatically from git commit count:
+- `git rev-list --count HEAD`
 
 ### 2. Build Release configuration (unsigned)
 
@@ -91,13 +102,26 @@ xcodebuild build \
 APP_PATH="/tmp/ticker-release-build/Build/Products/Release/Ticker.app"
 ```
 
+#### Quick sanity check: bundled Web UI exists
+
+If the app launches but the UI is blank in Release, check the bundled HTML is using **relative** asset paths:
+
+```bash
+grep -n \"assets/\" \"$APP_PATH/Contents/Resources/Resources/index.html\"
+```
+
+You want `./assets/...` (not `/assets/...`). This is controlled by `Web/vite.config.ts` (`base: './'` for build).
+
 ### 3. Code sign with Developer ID
 
 ```bash
 codesign --deep --force --verify --verbose \
   --sign "Developer ID Application: Nikolai Kozak (Z5DX2YK8FA)" \
   --options runtime \
+  --timestamp \
   "$APP_PATH"
+
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 ```
 
 ### 4. Notarize and staple
@@ -191,6 +215,10 @@ git checkout gh-pages
 
 Add a new `<item>` entry at the top of the channel (keep previous 2-3 entries for rollback):
 
+> `sparkle:version` must match the released app’s `CFBundleVersion` (monotonic integer).
+> Get it from the built app:
+> `defaults read "$APP_PATH/Contents/Info.plist" CFBundleVersion`
+
 ```xml
 <?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
@@ -229,10 +257,17 @@ git checkout main  # or your working branch
 
 ## Verification
 
-1. Open Ticker
+1. Copy the notarized app to `/Applications/Ticker.app` and launch it from there (Sparkle updates the installed app bundle).
 2. Click **Ticker > Check for Updates...**
-3. Sparkle should find and offer the update
-4. Install and verify the new version launches correctly
+3. Sparkle should find and offer the update.
+4. If macOS prompts **Privacy & Security → App Management** for `AutoUpdate`, click **Allow** (first update on a machine).
+5. Install and verify the new version launches correctly.
+
+If download fails, verify the enclosure URL is publicly accessible:
+```bash
+curl -I "https://github.com/.../releases/download/.../Ticker-....zip"
+curl -L -I "https://github.com/.../releases/download/.../Ticker-....zip"
+```
 
 ---
 
