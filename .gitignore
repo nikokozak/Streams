@@ -28,3 +28,6 @@ Sources/Ticker/Resources/
 
 # Vite cache
 Web/.vite/
+
+# Sparkle CLI tools (downloaded separately)
+tools/sparkle/
