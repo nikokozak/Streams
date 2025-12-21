@@ -16,8 +16,11 @@ Sources/Ticker/Resources/
 # IDE
 .vscode/
 .idea/
-*.xcodeproj/
-*.xcworkspace/
+
+# Xcode user-specific data (project itself is tracked)
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcworkspace/xcuserdata/
 
 # Environment
 .env

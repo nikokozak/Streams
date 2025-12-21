@@ -20,6 +20,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Decide whether to run Swift build
         id: swift_changes
         uses: dorny/paths-filter@v3
@@ -33,6 +35,7 @@ jobs:
               - 'Package.swift'
               - 'Package.resolved'
               - '.swiftpm/**'
+              - 'Ticker.xcodeproj/**'
       - name: Set build flag (push to main always builds)
         id: swift_should_build
         run: |
@@ -59,19 +62,27 @@ jobs:
         if: steps.swift_should_build.outputs.should_build == 'true'
         with:
           xcode-version: latest-stable
-      - name: Ensure resource directory exists (CI placeholder)
+      - uses: actions/setup-node@v4
         if: steps.swift_should_build.outputs.should_build == 'true'
-        run: |
-          mkdir -p Sources/Ticker/Resources
-          echo "CI placeholder resource (web assets built elsewhere)" > Sources/Ticker/Resources/.ci-placeholder
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Web/package-lock.json
+      - name: Build Web assets
+        if: steps.swift_should_build.outputs.should_build == 'true'
+        working-directory: Web
+        run: npm ci && npm run build
       - name: Build (no code signing)
         if: steps.swift_should_build.outputs.should_build == 'true'
-        run: >
-          xcodebuild build
-          -scheme Ticker
-          -destination 'platform=OS X'
-          -derivedDataPath .build/xcode
-          CODE_SIGNING_ALLOWED=NO
+        run: |
+          BUILD_NUMBER=$(git rev-list --count HEAD)
+          xcodebuild build \
+            -project Ticker.xcodeproj \
+            -scheme Ticker \
+            -destination 'platform=macOS' \
+            -derivedDataPath .build/xcode \
+            CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
 
   web-typecheck:
     name: web-typecheck
