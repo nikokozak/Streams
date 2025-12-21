@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 import ApplicationServices
+import Sparkle
 
 // Notification for appearance changes
 extension Notification.Name {
@@ -31,6 +32,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // Quick Panel services
     private var hotkeyService: HotkeyService?
     private var quickPanelManager: QuickPanelManager?
+
+    // Sparkle updater (lives for app lifetime)
+    private let updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
@@ -121,6 +129,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appMenu = NSMenu()
         appMenuItem.submenu = appMenu
         appMenu.addItem(withTitle: "About Ticker", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(NSMenuItem.separator())
+
+        // Sparkle "Check for Updates..." menu item
+        let checkForUpdatesItem = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdatesItem.target = updaterController
+        appMenu.addItem(checkForUpdatesItem)
+
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit Ticker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
