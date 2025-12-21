@@ -19,20 +19,30 @@ EOF
 }
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DERIVED_DATA_PATH="${DERIVED_DATA_PATH:-$ROOT_DIR/.build/xcode}"
+DERIVED_DATA_PATH_DEFAULT="$ROOT_DIR/.build/xcode"
+DERIVED_DATA_PATH="${TICKER_DERIVED_DATA_PATH:-$DERIVED_DATA_PATH_DEFAULT}"
 APP="$DERIVED_DATA_PATH/Build/Products"
 
 MODE="dev"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -d|--dev) MODE="dev"; shift ;;
-    -p|--prod) MODE="prod"; shift ;;
-    -h|--help) usage; exit 0 ;;
-    *)
-      echo "Unknown argument: $1" >&2
-      usage
-      exit 2
-      ;;
+  -d | --dev)
+    MODE="dev"
+    shift
+    ;;
+  -p | --prod)
+    MODE="prod"
+    shift
+    ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    usage
+    exit 2
+    ;;
   esac
 done
 
@@ -46,7 +56,7 @@ build_app() {
   if [[ "$configuration" == "Release" ]]; then
     local build_number
     build_number="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
-    extra_build_settings+=( "CURRENT_PROJECT_VERSION=$build_number" )
+    extra_build_settings+=("CURRENT_PROJECT_VERSION=$build_number")
   fi
 
   if [[ ${#extra_build_settings[@]} -gt 0 ]]; then
@@ -118,7 +128,10 @@ run_prod() {
 }
 
 case "$MODE" in
-  dev) run_dev ;;
-  prod) run_prod ;;
-  *) echo "Invalid mode: $MODE" >&2; exit 2 ;;
+dev) run_dev ;;
+prod) run_prod ;;
+*)
+  echo "Invalid mode: $MODE" >&2
+  exit 2
+  ;;
 esac

@@ -1,0 +1,699 @@
+#!/bin/bash
+
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage: ./tickerctl.sh [command] [options]
+
+Commands:
+  menu                 Interactive menu (default)
+  clean-derived-data    Delete repo-local Xcode DerivedData (fixes stale SPM artifacts)
+  build-dev            Build Debug app (unsigned)
+  run-dev              Build Debug + run (starts Vite dev server)
+  build-prod           Build Release app (unsigned, bundles web UI)
+  run-prod             Build Release + run (bundled web UI)
+  release-alpha        Build+sign+notarize+zip+Sparkle-sign (+ optional publish/appcast)
+  versions             Print version + build number for HEAD
+
+Common options:
+  --derived-data PATH          DerivedData path for build outputs (default: ./.build/xcode)
+
+release-alpha options:
+  --version X.Y.Z             Required. Marketing version, e.g. 2025.12.1
+  --derived-data PATH         Release DerivedData path (default: ./.build/xcode-release)
+  --publish                   Create a GitHub Release via `gh` and upload the zip
+  --update-appcast            Update appcast in APPCAST_REPO_DIR (requires config)
+  --commit-appcast            Commit the appcast change (requires config)
+  --push-appcast              Push the gh-pages commit (requires config)
+  --promote                   Equivalent to --publish --update-appcast --commit-appcast --push-appcast
+  --allow-dirty               Allow releasing with uncommitted changes (not recommended)
+
+Config (optional):
+  Create `tickerctl.local.sh` (gitignored) to set defaults:
+    SIGN_IDENTITY='Developer ID Application: Name (TEAMID)'
+    NOTARY_PROFILE='AC_PASSWORD'
+    SPARKLE_BIN='./tools/sparkle/bin'
+    UPDATES_REPO_SLUG='owner/repo'         # where the update zip is hosted
+    APPCAST_REPO_DIR='/path/to/gh-pages-worktree'   # recommended: separate worktree
+    APPCAST_FILENAME='appcast-alpha.xml'
+    APPCAST_MAX_ITEMS='3'
+    MIN_MACOS='14.0'
+
+Notes:
+  - Dev/prod commands build unsigned (CODE_SIGNING_ALLOWED=NO).
+  - Sparkle update testing requires an older build installed in /Applications
+    and a newer build published in the appcast.
+EOF
+}
+
+ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CONFIG_FILE="$ROOT_DIR/tickerctl.local.sh"
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CONFIG_FILE"
+fi
+
+DERIVED_DATA_PATH_DEFAULT="$ROOT_DIR/.build/xcode"
+RELEASE_DERIVED_DATA_PATH_DEFAULT="$ROOT_DIR/.build/xcode-release"
+# Ignore a globally-exported DERIVED_DATA_PATH (stale after repo moves).
+# Use --derived-data or TICKER_DERIVED_DATA_PATH instead.
+DERIVED_DATA_PATH="${TICKER_DERIVED_DATA_PATH:-$DERIVED_DATA_PATH_DEFAULT}"
+
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+NOTARY_PROFILE="${NOTARY_PROFILE:-AC_PASSWORD}"
+SPARKLE_BIN="${SPARKLE_BIN:-$ROOT_DIR/tools/sparkle/bin}"
+UPDATES_REPO_SLUG="${UPDATES_REPO_SLUG:-}"
+UPDATES_RELEASE_TARGET="${UPDATES_RELEASE_TARGET:-}"
+APPCAST_REPO_DIR="${APPCAST_REPO_DIR:-}"
+APPCAST_FILENAME="${APPCAST_FILENAME:-appcast-alpha.xml}"
+APPCAST_MAX_ITEMS="${APPCAST_MAX_ITEMS:-3}"
+MIN_MACOS="${MIN_MACOS:-14.0}"
+
+require_cmd() {
+  local name="$1"
+  command -v "$name" >/dev/null 2>&1 || {
+    echo "Missing required command: $name" >&2
+    exit 1
+  }
+}
+
+confirm_delete_dir() {
+  local dir="$1"
+  local prompt="${2:-}"
+
+  if [[ -z "$prompt" ]]; then
+    prompt="Delete directory '$dir'? [y/N] "
+  fi
+
+  echo -n "$prompt"
+  local reply
+  read -r reply
+  case "$reply" in
+  y | Y | yes | YES) return 0 ;;
+  *) return 1 ;;
+  esac
+}
+
+safe_delete_repo_dir() {
+  local dir="$1"
+
+  if [[ -z "$dir" ]]; then
+    echo "Refusing to delete: empty path" >&2
+    exit 1
+  fi
+  if [[ "$dir" == "/" || "$dir" == "$HOME" ]]; then
+    echo "Refusing to delete unsafe path: $dir" >&2
+    exit 1
+  fi
+  case "$dir" in
+  "$ROOT_DIR" | "$ROOT_DIR/"*) ;;
+  *)
+    echo "Refusing to delete path outside repo root: $dir" >&2
+    echo "If you intentionally used an external -derivedDataPath, delete it manually." >&2
+    exit 1
+    ;;
+  esac
+
+  if [[ -d "$dir" ]]; then
+    rm -rf "$dir"
+    echo "Deleted: $dir"
+  else
+    echo "No directory found at: $dir"
+  fi
+}
+
+build_number() {
+  git rev-list --count HEAD 2>/dev/null || echo 1
+}
+
+git_is_clean() {
+  git diff --quiet && git diff --quiet --staged
+}
+
+local_repo_slug_from_origin() {
+  local origin
+  origin="$(git remote get-url origin 2>/dev/null || true)"
+  case "$origin" in
+  git@github.com:*.git)
+    echo "$origin" | sed -E 's#^git@github.com:##; s#\\.git$##'
+    ;;
+  https://github.com/*.git)
+    echo "$origin" | sed -E 's#^https://github.com/##; s#\\.git$##'
+    ;;
+  https://github.com/*)
+    echo "$origin" | sed -E 's#^https://github.com/##'
+    ;;
+  *)
+    echo ""
+    ;;
+  esac
+}
+
+build_app() {
+  local configuration="$1"
+  local marketing_version="${2:-}"
+
+  require_cmd xcodebuild
+  cd "$ROOT_DIR"
+
+  local build_num
+  build_num="$(build_number)"
+
+  local -a extra=(
+    "CODE_SIGNING_ALLOWED=NO"
+    "CURRENT_PROJECT_VERSION=$build_num"
+  )
+  if [[ -n "$marketing_version" ]]; then
+    extra+=("MARKETING_VERSION=$marketing_version")
+  fi
+
+  xcodebuild build \
+    -project Ticker.xcodeproj \
+    -scheme Ticker \
+    -configuration "$configuration" \
+    -destination 'platform=macOS' \
+    -derivedDataPath "$DERIVED_DATA_PATH" \
+    "${extra[@]}" \
+    -quiet
+}
+
+build_web_assets() {
+  require_cmd npm
+  cd "$ROOT_DIR/Web"
+  if [[ ! -d node_modules ]]; then
+    npm ci
+  fi
+  npm run build
+}
+
+cmd_build_dev() {
+  echo "Building Debug (unsigned)…"
+  build_app Debug
+  echo "Built: $DERIVED_DATA_PATH/Build/Products/Debug/Ticker.app"
+}
+
+cmd_run_dev() {
+  TICKER_DERIVED_DATA_PATH="$DERIVED_DATA_PATH" "$ROOT_DIR/run.sh" --dev
+}
+
+cmd_build_prod() {
+  echo "Building web assets…"
+  build_web_assets
+  echo "Building Release (unsigned)…"
+  build_app Release
+  echo "Built: $DERIVED_DATA_PATH/Build/Products/Release/Ticker.app"
+}
+
+cmd_run_prod() {
+  TICKER_DERIVED_DATA_PATH="$DERIVED_DATA_PATH" "$ROOT_DIR/run.sh" --prod
+}
+
+cmd_clean_derived_data() {
+  local mode="dev"
+  local yes="false"
+  local derived_data_override=""
+  local -a remaining=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --derived-data)
+      derived_data_override="$2"
+      shift 2
+      ;;
+    --release)
+      mode="release"
+      shift
+      ;;
+    --all)
+      mode="all"
+      shift
+      ;;
+    -y | --yes)
+      yes="true"
+      shift
+      ;;
+    -h | --help)
+      cat <<'EOF'
+Usage: ./tickerctl.sh clean-derived-data [options]
+
+Options:
+  --derived-data PATH   Path to delete (defaults depend on --release/--all)
+  --release             Delete release DerivedData (default: ./.build/xcode-release)
+  --all                 Delete both dev/prod + release DerivedData
+  -y, --yes             Do not prompt for confirmation
+EOF
+      exit 0
+      ;;
+    *)
+      remaining+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  if (( ${#remaining[@]} > 0 )); then
+    echo "Unknown arguments: ${remaining[*]}" >&2
+    exit 2
+  fi
+
+  local dev_derived_data="$DERIVED_DATA_PATH"
+  local release_derived_data="$RELEASE_DERIVED_DATA_PATH_DEFAULT"
+  if [[ -n "$derived_data_override" ]]; then
+    if [[ "$mode" == "release" ]]; then
+      release_derived_data="$derived_data_override"
+    else
+      dev_derived_data="$derived_data_override"
+    fi
+  fi
+
+  local -a dirs=()
+  case "$mode" in
+  dev) dirs+=("$dev_derived_data") ;;
+  release) dirs+=("$release_derived_data") ;;
+  all)
+    dirs+=("$dev_derived_data" "$release_derived_data")
+    ;;
+  *)
+    echo "Unknown mode: $mode" >&2
+    exit 2
+    ;;
+  esac
+
+  echo "Will delete:"
+  printf '  - %s\n' "${dirs[@]}"
+
+  if [[ "$yes" != "true" ]]; then
+    if ! confirm_delete_dir "${dirs[*]}" "Proceed? [y/N] "; then
+      echo "Canceled."
+      exit 0
+    fi
+  fi
+
+  for d in "${dirs[@]}"; do
+    safe_delete_repo_dir "$d"
+  done
+}
+
+extract_sign_update_fields() {
+  local output="$1"
+  local signature length
+
+  signature="$(echo "$output" | sed -n 's/.*sparkle:edSignature=\"\\([^\"]*\\)\".*/\\1/p' | tail -n 1)"
+  length="$(echo "$output" | sed -n 's/.*length=\"\\([0-9]*\\)\".*/\\1/p' | tail -n 1)"
+
+  if [[ -z "$signature" || -z "$length" ]]; then
+    echo "Failed to parse sign_update output:" >&2
+    echo "$output" >&2
+    exit 1
+  fi
+
+  echo "$signature" "$length"
+}
+
+write_appcast_item() {
+  local version="$1"
+  local build_num="$2"
+  local signature="$3"
+  local length="$4"
+  local asset_name="$5"
+  local pub_date
+
+  pub_date="$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S +0000')"
+
+  cat <<EOF
+    <item>
+      <title>Version ${version}</title>
+      <pubDate>${pub_date}</pubDate>
+      <sparkle:version>${build_num}</sparkle:version>
+      <sparkle:shortVersionString>${version}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>${MIN_MACOS}</sparkle:minimumSystemVersion>
+      <enclosure
+        url="https://github.com/${UPDATES_REPO_SLUG}/releases/download/v${version}/${asset_name}"
+        type="application/octet-stream"
+        sparkle:edSignature="${signature}"
+        length="${length}"
+      />
+    </item>
+EOF
+}
+
+cmd_release_alpha() {
+  local version=""
+  local publish="false"
+  local update_appcast="false"
+  local commit_appcast="false"
+  local push_appcast="false"
+  local promote="false"
+  local allow_dirty="false"
+  local release_derived_data="$RELEASE_DERIVED_DATA_PATH_DEFAULT"
+  local -a remaining=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --version)
+      version="$2"
+      shift 2
+      ;;
+    --publish)
+      publish="true"
+      shift
+      ;;
+    --update-appcast)
+      update_appcast="true"
+      shift
+      ;;
+    --commit-appcast)
+      commit_appcast="true"
+      shift
+      ;;
+    --push-appcast)
+      push_appcast="true"
+      shift
+      ;;
+    --promote)
+      promote="true"
+      shift
+      ;;
+    --allow-dirty)
+      allow_dirty="true"
+      shift
+      ;;
+    --derived-data)
+      release_derived_data="$2"
+      shift 2
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      remaining+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  if (( ${#remaining[@]} > 0 )); then
+    echo "Unknown arguments: ${remaining[*]}" >&2
+    exit 2
+  fi
+
+  if [[ -z "$version" ]]; then
+    echo "release-alpha requires --version (e.g. 2025.12.1)" >&2
+    exit 2
+  fi
+  if [[ -z "$SIGN_IDENTITY" ]]; then
+    echo "Missing SIGN_IDENTITY. Set it in tickerctl.local.sh." >&2
+    exit 1
+  fi
+  if [[ -z "$UPDATES_REPO_SLUG" ]]; then
+    echo "Missing UPDATES_REPO_SLUG (owner/repo) where the zip is hosted." >&2
+    exit 1
+  fi
+
+  require_cmd git
+  require_cmd ditto
+  require_cmd codesign
+  require_cmd xcrun
+  require_cmd spctl
+
+  if [[ "$promote" == "true" ]]; then
+    publish="true"
+    update_appcast="true"
+    commit_appcast="true"
+    push_appcast="true"
+  fi
+
+  if [[ "$publish" == "true" ]]; then
+    require_cmd gh
+  fi
+
+  if [[ "$allow_dirty" != "true" ]]; then
+    if ! git_is_clean; then
+      echo "Refusing to release: working tree has uncommitted changes." >&2
+      echo "Commit/stash, or re-run with --allow-dirty." >&2
+      exit 1
+    fi
+  fi
+
+  DERIVED_DATA_PATH="$release_derived_data"
+  local release_dd="$DERIVED_DATA_PATH"
+  local release_out_dir="$ROOT_DIR/.build/releases/v${version}"
+  mkdir -p "$release_out_dir"
+
+  echo "Building web assets (Release)…"
+  build_web_assets
+
+  local build_num
+  build_num="$(build_number)"
+
+  echo "Building Release (unsigned)…"
+  build_app Release "$version"
+
+  local app_path="$release_dd/Build/Products/Release/Ticker.app"
+  if [[ ! -d "$app_path" ]]; then
+    echo "Expected app bundle not found: $app_path" >&2
+    exit 1
+  fi
+
+  require_cmd defaults
+  local bundle_build_num
+  bundle_build_num="$(defaults read "$app_path/Contents/Info.plist" CFBundleVersion 2>/dev/null || echo "$build_num")"
+
+  echo "Signing app…"
+  codesign --deep --force --verify --verbose \
+    --sign "$SIGN_IDENTITY" \
+    --options runtime \
+    --timestamp \
+    "$app_path"
+  codesign --verify --deep --strict --verbose=2 "$app_path"
+
+  echo "Notarizing…"
+  local notarize_zip="$release_out_dir/Ticker-notarize.zip"
+  ditto -c -k --sequesterRsrc --keepParent "$app_path" "$notarize_zip"
+  xcrun notarytool submit "$notarize_zip" --keychain-profile "$NOTARY_PROFILE" --wait
+  xcrun stapler staple "$app_path"
+  spctl -a -vv "$app_path"
+
+  echo "Creating distribution zip…"
+  local zip_name="Ticker-${version}.zip"
+  local zip_path="$release_out_dir/$zip_name"
+  (cd "$release_dd/Build/Products/Release" && ditto -c -k --sequesterRsrc --keepParent "Ticker.app" "$zip_path")
+
+  if [[ ! -x "$SPARKLE_BIN/sign_update" ]]; then
+    # Common archive layout: tools/sparkle/Sparkle/bin/*
+    local alt_bin="$ROOT_DIR/tools/sparkle/Sparkle/bin"
+    if [[ -x "$alt_bin/sign_update" ]]; then
+      SPARKLE_BIN="$alt_bin"
+    else
+      echo "Sparkle sign_update not found/executable at: $SPARKLE_BIN/sign_update" >&2
+      echo "If you extracted a Sparkle .tar.xz, the tools may live at: $alt_bin/sign_update" >&2
+      exit 1
+    fi
+  fi
+
+  echo "Signing update zip with Sparkle…"
+  local sign_output
+  sign_output="$("$SPARKLE_BIN/sign_update" "$zip_path")"
+  read -r signature length < <(extract_sign_update_fields "$sign_output")
+
+  echo "Preparing appcast <item>…"
+  local item
+  item="$(write_appcast_item "$version" "$bundle_build_num" "$signature" "$length" "$zip_name")"
+
+  echo
+  echo "=== Appcast item (paste into appcast-alpha.xml) ==="
+  echo "$item"
+  echo "=================================================="
+  echo
+
+  if [[ "$publish" == "true" ]]; then
+    echo "Publishing GitHub Release v${version}…"
+    local target_arg=()
+    if [[ -n "$UPDATES_RELEASE_TARGET" ]]; then
+      target_arg=(--target "$UPDATES_RELEASE_TARGET")
+    else
+      local local_slug
+      local_slug="$(local_repo_slug_from_origin)"
+      if [[ -n "$local_slug" && "$local_slug" == "$UPDATES_REPO_SLUG" ]]; then
+        target_arg=(--target "$(git rev-parse HEAD)")
+      fi
+    fi
+
+    gh release create "v${version}" \
+      --repo "$UPDATES_REPO_SLUG" \
+      "${target_arg[@]}" \
+      --title "Ticker ${version}" \
+      --notes "Alpha release ${version}" \
+      "$zip_path"
+  fi
+
+  if [[ "$update_appcast" == "true" ]]; then
+    require_cmd python3
+    if [[ -z "$APPCAST_REPO_DIR" ]]; then
+      echo "Missing APPCAST_REPO_DIR (path to gh-pages worktree). Set it in tickerctl.local.sh." >&2
+      exit 1
+    fi
+    if [[ ! -d "$APPCAST_REPO_DIR" ]]; then
+      echo "APPCAST_REPO_DIR not found: $APPCAST_REPO_DIR" >&2
+      exit 1
+    fi
+    local appcast_path="$APPCAST_REPO_DIR/$APPCAST_FILENAME"
+    if [[ ! -f "$appcast_path" ]]; then
+      echo "Appcast file not found: $appcast_path" >&2
+      exit 1
+    fi
+
+    echo "Updating appcast file: $appcast_path"
+    python3 - <<PY
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from datetime import datetime, timezone
+
+path = Path(r"""$appcast_path""")
+xml = path.read_text(encoding="utf-8")
+
+SPARKLE_NS = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+ET.register_namespace("sparkle", SPARKLE_NS)
+
+tree = ET.ElementTree(ET.fromstring(xml))
+root = tree.getroot()
+channel = root.find("channel")
+if channel is None:
+    raise SystemExit("appcast missing <channel>")
+
+def sparkle(tag: str) -> str:
+    return f"{{{SPARKLE_NS}}}{tag}"
+
+item = ET.Element("item")
+ET.SubElement(item, "title").text = f"Version {r'''$version'''}"
+ET.SubElement(item, "pubDate").text = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000")
+ET.SubElement(item, sparkle("version")).text = r'''$bundle_build_num'''
+ET.SubElement(item, sparkle("shortVersionString")).text = r'''$version'''
+ET.SubElement(item, sparkle("minimumSystemVersion")).text = r'''$MIN_MACOS'''
+
+enclosure = ET.SubElement(item, "enclosure")
+enclosure.set("url", f"https://github.com/{r'''$UPDATES_REPO_SLUG'''}/releases/download/v{r'''$version'''}/{r'''$zip_name'''}")
+enclosure.set("type", "application/octet-stream")
+enclosure.set(sparkle("edSignature"), r'''$signature''')
+enclosure.set("length", r'''$length''')
+
+channel.insert(1 if len(channel) > 0 and channel[0].tag == "title" else 0, item)
+
+max_items = int(r'''$APPCAST_MAX_ITEMS''')
+items = [child for child in list(channel) if child.tag == "item"]
+for extra in items[max_items:]:
+    channel.remove(extra)
+
+path.write_text(ET.tostring(root, encoding="unicode", xml_declaration=True), encoding="utf-8")
+PY
+
+    echo "Appcast updated."
+
+    if [[ "$commit_appcast" == "true" || "$push_appcast" == "true" ]]; then
+      require_cmd git
+      local current_branch
+      current_branch="$(git -C "$APPCAST_REPO_DIR" branch --show-current)"
+      if [[ "$current_branch" != "gh-pages" ]]; then
+        echo "Refusing to commit/push appcast: $APPCAST_REPO_DIR is on branch '$current_branch' (expected gh-pages)." >&2
+        exit 1
+      fi
+      git -C "$APPCAST_REPO_DIR" add "$APPCAST_FILENAME"
+      if [[ "$commit_appcast" == "true" ]]; then
+        git -C "$APPCAST_REPO_DIR" commit -m "Release v${version}" || true
+      fi
+      if [[ "$push_appcast" == "true" ]]; then
+        git -C "$APPCAST_REPO_DIR" push
+      fi
+    fi
+  fi
+
+  echo "Release artifact: $zip_path"
+  echo "Signed/notarized app: $app_path"
+}
+
+cmd_versions() {
+  local build_num
+  build_num="$(build_number)"
+  echo "HEAD build number (CFBundleVersion): $build_num"
+}
+
+cmd_menu() {
+  PS3="Select an action: "
+  select choice in \
+    "Build Debug (dev)" \
+    "Build + Run Debug (dev)" \
+    "Build Release (prod, unsigned)" \
+    "Build + Run Release (prod, unsigned)" \
+    "Clean DerivedData (fix stale SPM artifacts)" \
+    "Release (alpha): build+sign+notarize+zip+Sparkle-sign" \
+    "Release (alpha) + promote: publish + update appcast" \
+    "Versions (build number)" \
+    "Quit"; do
+    case "$REPLY" in
+    1)
+      cmd_build_dev
+      break
+      ;;
+    2)
+      cmd_run_dev
+      break
+      ;;
+    3)
+      cmd_build_prod
+      break
+      ;;
+    4)
+      cmd_run_prod
+      break
+      ;;
+    5)
+      cmd_clean_derived_data
+      break
+      ;;
+    6)
+      echo "Enter marketing version (e.g. 2025.12.1):"
+      read -r v
+      cmd_release_alpha --version "$v"
+      break
+      ;;
+    7)
+      echo "Enter marketing version (e.g. 2025.12.1):"
+      read -r v
+      cmd_release_alpha --version "$v" --promote
+      break
+      ;;
+    8)
+      cmd_versions
+      break
+      ;;
+    9) break ;;
+    *) echo "Invalid selection" ;;
+    esac
+  done
+}
+
+main() {
+  local cmd="${1:-menu}"
+  shift || true
+
+  case "$cmd" in
+  menu) cmd_menu ;;
+  clean-derived-data) cmd_clean_derived_data "$@" ;;
+  build-dev) cmd_build_dev ;;
+  run-dev) cmd_run_dev ;;
+  build-prod) cmd_build_prod ;;
+  run-prod) cmd_run_prod ;;
+  release-alpha) cmd_release_alpha "$@" ;;
+  versions) cmd_versions ;;
+  -h | --help | help) usage ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage
+    exit 2
+    ;;
+  esac
+}
+
+main "$@"

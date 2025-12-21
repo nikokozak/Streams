@@ -13,6 +13,7 @@
 		R1000001000000000001 /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = F1000001000000000001 /* Resources */; };
 		A1000001000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000001 /* AppDelegate.swift */; };
 		A1000001000000000002 /* AssetSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000002 /* AssetSchemeHandler.swift */; };
+		A100000100000000002B /* BundleSchemeHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000100000000002B /* BundleSchemeHandler.swift */; };
 		A1000001000000000003 /* BridgeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000003 /* BridgeService.swift */; };
 		A1000001000000000004 /* DroppableWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000004 /* DroppableWebView.swift */; };
 		A1000001000000000005 /* WebViewManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000005 /* WebViewManager.swift */; };
@@ -61,6 +62,7 @@
 		E8A1B2C3D4E5F6A7B8C9D0E3 /* Ticker.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Ticker.entitlements; sourceTree = "<group>"; };
 		B1000001000000000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		B1000001000000000002 /* AssetSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssetSchemeHandler.swift; sourceTree = "<group>"; };
+		B100000100000000002B /* BundleSchemeHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BundleSchemeHandler.swift; sourceTree = "<group>"; };
 		B1000001000000000003 /* BridgeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeService.swift; sourceTree = "<group>"; };
 		B1000001000000000004 /* DroppableWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DroppableWebView.swift; sourceTree = "<group>"; };
 		B1000001000000000005 /* WebViewManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewManager.swift; sourceTree = "<group>"; };
@@ -161,6 +163,7 @@
 			children = (
 				B1000001000000000001 /* AppDelegate.swift */,
 				B1000001000000000002 /* AssetSchemeHandler.swift */,
+				B100000100000000002B /* BundleSchemeHandler.swift */,
 				B1000001000000000003 /* BridgeService.swift */,
 				B1000001000000000004 /* DroppableWebView.swift */,
 				B1000001000000000005 /* WebViewManager.swift */,
@@ -365,6 +368,7 @@
 			files = (
 				A1000001000000000001 /* AppDelegate.swift in Sources */,
 				A1000001000000000002 /* AssetSchemeHandler.swift in Sources */,
+				A100000100000000002B /* BundleSchemeHandler.swift in Sources */,
 				A1000001000000000003 /* BridgeService.swift in Sources */,
 				A1000001000000000004 /* DroppableWebView.swift in Sources */,
 				A1000001000000000005 /* WebViewManager.swift in Sources */,

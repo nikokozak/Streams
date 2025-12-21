@@ -2,6 +2,20 @@
 
 Step-by-step guide to release a new Ticker alpha build with Sparkle auto-updates.
 
+If you want a “single entry point” that wraps the common dev/prod/release commands, use `./tickerctl.sh`.
+
+## Mental model (what each thing “means”)
+
+- **Dev build (Debug)**: unsigned, fast iteration. In Ticker, Debug loads the web UI from the Vite dev server (`http://localhost:5173`), and you typically run it from Terminal during development.
+- **Prod build (Release, unsigned)**: Release configuration built locally, still **not** signed/notarized. Useful for quick “what will Release behave like?” checks (performance, bundling, no dev server), but not an end-user artifact.
+- **Distribution build (Release, signed + notarized + stapled)**: what you can hand to users. This is the `.app` you copy into `/Applications`.
+- **Sparkle update payload**: a zipped `.app` (`Ticker-<version>.zip`) that is signed with Sparkle (`sign_update`) and hosted publicly.
+- **Appcast**: `appcast-alpha.xml` (on GitHub Pages) that tells Sparkle where to download the payload and how to verify it. It must include:
+  - `sparkle:version` = released app’s `CFBundleVersion` (monotonic integer)
+  - `sparkle:shortVersionString` = released app’s `CFBundleShortVersionString` (e.g. `2025.12.1`)
+  - `enclosure url`, `sparkle:edSignature`, `length`
+- **How to test updates**: you need an *older* build installed in `/Applications/Ticker.app` and a *newer* build published in the appcast. If you overwrite `/Applications/Ticker.app` with the new build first, there is nothing left to “update”.
+
 ## Prerequisites
 
 - macOS with Xcode installed
@@ -23,12 +37,13 @@ SPM provides the Sparkle framework, but release tools (`sign_update`, `generate_
 
 ```bash
 # Download Sparkle release (check for latest version)
-curl -L -o /tmp/Sparkle-2.6.4.tar.xz \
+mkdir -p .build/downloads
+curl -L -o .build/downloads/Sparkle-2.6.4.tar.xz \
   https://github.com/sparkle-project/Sparkle/releases/download/2.6.4/Sparkle-2.6.4.tar.xz
 
 # Extract tools to project (gitignored)
 mkdir -p tools/sparkle
-tar -xf /tmp/Sparkle-2.6.4.tar.xz -C tools/sparkle
+tar -xf .build/downloads/Sparkle-2.6.4.tar.xz -C tools/sparkle
 ```
 
 Add to `.gitignore`:
@@ -37,6 +52,9 @@ tools/sparkle/
 ```
 
 Tools are now at `tools/sparkle/bin/sign_update` and `tools/sparkle/bin/generate_appcast`.
+
+> Note: depending on the Sparkle archive layout, the tools may be under
+> `tools/sparkle/Sparkle/bin/` instead. Adjust your config accordingly.
 
 ### GitHub Pages Setup (one-time)
 
@@ -95,11 +113,14 @@ xcodebuild build \
   -scheme Ticker \
   -configuration Release \
   -destination 'platform=macOS' \
-  -derivedDataPath /tmp/ticker-release-build \
+  -derivedDataPath .build/xcode-release \
   CODE_SIGNING_ALLOWED=NO \
   CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
 
-APP_PATH="/tmp/ticker-release-build/Build/Products/Release/Ticker.app"
+APP_PATH=".build/xcode-release/Build/Products/Release/Ticker.app"
+VERSION=$(defaults read "$APP_PATH/Contents/Info.plist" CFBundleShortVersionString)
+RELEASE_OUT_DIR=".build/releases/v${VERSION}"
+mkdir -p "$RELEASE_OUT_DIR"
 ```
 
 #### Quick sanity check: bundled Web UI exists
@@ -128,7 +149,7 @@ codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 ```bash
 # Create zip for notarization (sequester resource forks)
-ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" /tmp/Ticker-notarize.zip
+ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "$RELEASE_OUT_DIR/Ticker-notarize.zip"
 
 # Store credentials in Keychain (one-time per machine).
 # Use an app-specific password from https://appleid.apple.com (label it "notarytool").
@@ -138,7 +159,7 @@ xcrun notarytool store-credentials AC_PASSWORD \
   --password "APP_SPECIFIC_PASSWORD"
 
 # Submit for notarization
-xcrun notarytool submit /tmp/Ticker-notarize.zip \
+xcrun notarytool submit "$RELEASE_OUT_DIR/Ticker-notarize.zip" \
   --keychain-profile AC_PASSWORD \
   --wait
 
@@ -157,11 +178,11 @@ The `spctl` command should output: `accepted` and `source=Notarized Developer ID
 VERSION=$(defaults read "$APP_PATH/Contents/Info.plist" CFBundleShortVersionString)
 ZIP_NAME="Ticker-${VERSION}.zip"
 
-cd /tmp/ticker-release-build/Build/Products/Release
-ditto -c -k --sequesterRsrc --keepParent Ticker.app "/tmp/$ZIP_NAME"
+cd .build/xcode-release/Build/Products/Release
+ditto -c -k --sequesterRsrc --keepParent Ticker.app "$RELEASE_OUT_DIR/$ZIP_NAME"
 
 # Get file size for appcast
-FILE_SIZE=$(stat -f%z "/tmp/$ZIP_NAME")
+FILE_SIZE=$(stat -f%z "$RELEASE_OUT_DIR/$ZIP_NAME")
 echo "File size: $FILE_SIZE bytes"
 ```
 
@@ -169,7 +190,7 @@ echo "File size: $FILE_SIZE bytes"
 
 ```bash
 # Sign and get signature for appcast
-./tools/sparkle/bin/sign_update "/tmp/$ZIP_NAME"
+./tools/sparkle/bin/sign_update "$RELEASE_OUT_DIR/$ZIP_NAME"
 ```
 
 This outputs:
@@ -185,7 +206,7 @@ sparkle:edSignature="BASE64_SIGNATURE" length="12345678"
 gh release create "v${VERSION}" \
   --title "Ticker ${VERSION}" \
   --notes "Release notes here" \
-  "/tmp/$ZIP_NAME"
+  "$RELEASE_OUT_DIR/$ZIP_NAME"
 ```
 
 **Important**: The uploaded asset filename (`Ticker-YYYY.MM.patch.zip`) must exactly match what you put in the appcast URL.
@@ -196,10 +217,11 @@ gh release create "v${VERSION}" \
 
 ```bash
 # Point generate_appcast at a folder containing your signed zip
-mkdir -p /tmp/appcast-source
-cp "/tmp/$ZIP_NAME" /tmp/appcast-source/
+APPCAST_SOURCE_DIR="$RELEASE_OUT_DIR/appcast-source"
+mkdir -p "$APPCAST_SOURCE_DIR"
+cp "$RELEASE_OUT_DIR/$ZIP_NAME" "$APPCAST_SOURCE_DIR/"
 
-./tools/sparkle/bin/generate_appcast /tmp/appcast-source
+./tools/sparkle/bin/generate_appcast "$APPCAST_SOURCE_DIR"
 
 # This creates/updates appcast.xml in that folder
 # Copy the <item> entry to your gh-pages appcast-alpha.xml
@@ -297,5 +319,5 @@ security find-generic-password -a "ed25519" -w
 
 For CI signing, pipe the secret to sign_update:
 ```bash
-echo "$SPARKLE_PRIVATE_KEY" | ./tools/sparkle/bin/sign_update --ed-key-file - "/tmp/$ZIP_NAME"
+echo "$SPARKLE_PRIVATE_KEY" | ./tools/sparkle/bin/sign_update --ed-key-file - "$RELEASE_OUT_DIR/$ZIP_NAME"
 ```

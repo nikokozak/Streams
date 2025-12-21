@@ -31,3 +31,6 @@ Web/.vite/
 
 # Sparkle CLI tools (downloaded separately)
 tools/sparkle/
+
+# Local release config (do not commit)
+tickerctl.local.sh
