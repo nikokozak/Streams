@@ -106,11 +106,16 @@ codesign --deep --force --verify --verbose \
 # Create zip for notarization (sequester resource forks)
 ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" /tmp/Ticker-notarize.zip
 
-# Submit for notarization
-xcrun notarytool submit /tmp/Ticker-notarize.zip \
+# Store credentials in Keychain (one-time per machine).
+# Use an app-specific password from https://appleid.apple.com (label it "notarytool").
+xcrun notarytool store-credentials AC_PASSWORD \
   --apple-id "your@email.com" \
   --team-id "TEAM_ID" \
-  --password "@keychain:AC_PASSWORD" \
+  --password "APP_SPECIFIC_PASSWORD"
+
+# Submit for notarization
+xcrun notarytool submit /tmp/Ticker-notarize.zip \
+  --keychain-profile AC_PASSWORD \
   --wait
 
 # Staple the notarization ticket
