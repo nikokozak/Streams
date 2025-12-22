@@ -611,23 +611,19 @@ cmd_release_alpha() {
 
   if [[ "$publish" == "true" ]]; then
     echo "Publishing GitHub Release v${version}…"
-    local target_arg=()
+    local -a gh_cmd=(gh release create "v${version}" --repo "$UPDATES_REPO_SLUG")
     if [[ -n "$UPDATES_RELEASE_TARGET" ]]; then
-      target_arg=(--target "$UPDATES_RELEASE_TARGET")
+      gh_cmd+=(--target "$UPDATES_RELEASE_TARGET")
     else
       local local_slug
       local_slug="$(local_repo_slug_from_origin)"
       if [[ -n "$local_slug" && "$local_slug" == "$UPDATES_REPO_SLUG" ]]; then
-        target_arg=(--target "$(git rev-parse HEAD)")
+        gh_cmd+=(--target "$(git rev-parse HEAD)")
       fi
     fi
 
-    gh release create "v${version}" \
-      --repo "$UPDATES_REPO_SLUG" \
-      "${target_arg[@]}" \
-      --title "Ticker ${version}" \
-      --notes "Alpha release ${version}" \
-      "$zip_path"
+    gh_cmd+=(--title "Ticker ${version}" --notes "Alpha release ${version}" "$zip_path")
+    "${gh_cmd[@]}"
   fi
 
   if [[ "$update_appcast" == "true" ]]; then
