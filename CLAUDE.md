@@ -49,18 +49,77 @@ After completing a slice/task, provide a comprehensive summary that includes:
 
 The user will share this summary with GPT for review. Only commit after approval.
 
-## Commands
+---
+
+## Quick Reference
+
+### Build & Run
 
 ```bash
+# Preferred: Use tickerctl.sh for all build operations
+./tickerctl.sh              # Interactive menu
+./tickerctl.sh build-dev    # Build Debug (unsigned)
+./tickerctl.sh run-dev      # Build + run Debug with Vite dev server
+./tickerctl.sh build-prod   # Build Release (unsigned, bundles web)
+./tickerctl.sh run-prod     # Build + run Release (bundled web)
+
+# Direct xcodebuild (if needed)
 xcodebuild build -project Ticker.xcodeproj -scheme Ticker -destination 'platform=macOS' -derivedDataPath .build/xcode
+
+# Web typecheck only
 cd Web && npm run typecheck
 ```
 
-**Never run the app** — only build. User runs to avoid orphaned processes.
+**Never run the app directly** — only build. User runs to avoid orphaned processes.
 
-> **iCloud Note**: If building from an iCloud-synced workspace causes codesign/xattr errors ("resource fork, Finder information, or similar detritus not allowed"), move the repo out of iCloud (preferred) or use `-derivedDataPath /tmp/ticker-xcode-build` as a workaround.
+### Release (Alpha Channel)
 
-> **Build Number**: For release builds, set `CURRENT_PROJECT_VERSION=$(git rev-list --count HEAD)` to get monotonic build numbers. CI does this automatically.
+```bash
+# Full release: build → sign → notarize → zip → Sparkle-sign → publish → appcast
+./tickerctl.sh release-alpha --version 2025.12.1 --promote
+
+# Or step by step via menu option 5/6
+./tickerctl.sh
+```
+
+Requires `tickerctl.local.sh` with signing credentials (see `tickerctl.local.example.sh`).
+
+---
+
+## Common Issues & Fixes
+
+### Stale Swift Package Manager Data
+
+**Symptom:** Build fails with "XCFramework not found" errors pointing to old paths.
+
+**Fix:**
+```bash
+rm -rf .build/xcode
+# Then rebuild — SPM will re-resolve packages
+```
+
+### CORS Errors in Release Build
+
+**Symptom:** WebView console shows "Origin null is not allowed" or "Not allowed to load local resource".
+
+**Cause:** `file://` URLs have null origin; ES modules require CORS.
+
+**Fix:** Web content is served via `ticker-bundle://` custom URL scheme (not `file://`). If errors persist, verify:
+1. `BundleSchemeHandler.swift` is registered in `WebViewManager.init()`
+2. Release mode loads `ticker-bundle:///index.html` (not `loadFileURL`)
+3. Vite config removes `crossorigin` attributes from build output
+
+### iCloud Workspace Errors
+
+**Symptom:** Codesign fails with "resource fork, Finder information, or similar detritus not allowed".
+
+**Fix:** Move repo out of iCloud Drive (preferred) or use `-derivedDataPath /tmp/ticker-xcode-build`.
+
+### Build Number
+
+For release builds, set `CURRENT_PROJECT_VERSION=$(git rev-list --count HEAD)` for monotonic build numbers. CI and `tickerctl.sh` do this automatically.
+
+---
 
 ## Architecture
 
@@ -80,30 +139,44 @@ cd Web && npm run typecheck
                   Swift Services
 ```
 
+### Data Locations
+
+All user data lives in `~/Library/Application Support/Ticker/`:
+- `ticker.db` — SQLite database (GRDB)
+- `assets/` — User images (screenshots, pastes)
+- `backups/` — Auto-created before migrations (keeps 5 newest)
+
 ### Swift (`Sources/Ticker/`)
 
 | File | Purpose |
 |------|---------|
-| `App/AppDelegate.swift` | App entry, hotkeys, window management |
+| **App** | |
+| `App/AppDelegate.swift` | App entry, hotkeys, window management, Sparkle updater |
 | `App/WebViewManager.swift` | Central hub — all bridge message handlers |
 | `App/BridgeService.swift` | Swift ↔ JS messaging |
-| `App/AssetSchemeHandler.swift` | Serves `ticker-asset://` URLs to webview |
+| `App/AssetSchemeHandler.swift` | Serves `ticker-asset://` URLs (user images) |
+| `App/BundleSchemeHandler.swift` | Serves `ticker-bundle://` URLs (bundled web resources) |
 | `App/QuickPanel/QuickPanelWindow.swift` | Floating NSPanel for global capture |
 | `App/QuickPanel/QuickPanelManager.swift` | Panel lifecycle, cell creation |
 | `App/QuickPanel/QuickPanelView.swift` | SwiftUI panel UI |
+| **Services/System** | |
 | `Services/System/HotkeyService.swift` | Global hotkey registration (Carbon) |
 | `Services/System/SelectionReaderService.swift` | Read selected text (Accessibility) |
 | `Services/System/ClipboardService.swift` | Clipboard image detection |
-| `Services/StreamActivityService.swift` | Track active stream for targeting |
+| **Services** | |
 | `Services/Prompts.swift` | All AI prompts — edit to tune behavior |
 | `Services/AIOrchestrator.swift` | Routes queries to AI providers |
 | `Services/AIService.swift` | OpenAI streaming (implements `LLMProvider`) |
+| `Services/AnthropicService.swift` | Anthropic streaming (implements `LLMProvider`) |
 | `Services/PerplexityService.swift` | Real-time search (implements `LLMProvider`) |
-| `Services/PersistenceService.swift` | SQLite via GRDB |
-| `Services/AssetService.swift` | Local image storage in `~/.config/ticker/assets/` |
+| `Services/PersistenceService.swift` | SQLite via GRDB, migrations, backup logic |
+| `Services/AssetService.swift` | Local image storage in Application Support |
 | `Services/RetrievalService.swift` | RAG — semantic search over sources |
 | `Services/EmbeddingService.swift` | Local embeddings via MLX |
+| **Models** | |
 | `Models/Cell.swift` | Cell with modifiers, processing config |
+| `Models/Stream.swift` | Research session container |
+| `Models/SourceReference.swift` | Attached files with embeddings |
 
 ### Web (`Web/src/`)
 
@@ -127,6 +200,17 @@ cd Web && npm run typecheck
 | `utils/markdown.ts` | Markdown → sanitized HTML (DOMPurify) |
 | `types/` | TypeScript types and bridge message definitions |
 
+### Tooling
+
+| File | Purpose |
+|------|---------|
+| `tickerctl.sh` | Unified build/release automation |
+| `tickerctl.local.sh` | Local config overrides (gitignored) |
+| `run.sh` | Legacy dev runner (prefer tickerctl.sh) |
+| `tools/sparkle/` | Sparkle CLI tools for update signing |
+
+---
+
 ## Data Model
 
 - **Stream**: Research session with cells and source references
@@ -136,6 +220,8 @@ cd Web && npm run typecheck
   - `sourceApp`: Origin app name (for quote cells from Quick Panel)
   - `processingConfig`: Live block settings (refresh triggers)
 - **SourceReference**: Attached file with extracted text, embeddings
+
+---
 
 ## Editor Architecture
 
@@ -148,6 +234,8 @@ The app uses a **unified editor** — a single TipTap instance for the entire st
 - **External updates** (AI complete, Quick Panel): Write TO TipTap, then normal flow resumes
 
 Legacy editor remains available via Settings toggle or `?unified=false` URL param.
+
+---
 
 ## Quick Panel
 
@@ -171,13 +259,67 @@ Global capture panel accessible via **Cmd+L** from any app. Captures selected te
 - After 15min idle: Show stream picker
 - No streams: Create "Untitled"
 
+---
+
+## Sparkle (Auto-Updates)
+
+Integrated via Sparkle 2.6.0+ (Swift Package Manager).
+
+- **Appcast URL**: `https://nikokozak.github.io/Streams/appcast-alpha.xml`
+- **EdDSA public key**: Stored in `Info.plist` (`SUPublicEDKey`)
+- **Private key**: Stored in macOS Keychain (for signing updates)
+- **Menu item**: "Check for Updates..." triggers `SPUStandardUpdaterController`
+
+Update signing handled by `tickerctl.sh release-alpha` using Sparkle's `sign_update` tool.
+
+---
+
 ## Code Standards
 
 1. Delete over patch — no hacks
 2. No dead code
-3. No force unwraps in Swift
+3. No force unwraps in Swift (use `guard`, `if let`, `??`)
 4. No `any` types in TypeScript
 5. `async/await` for async code
+6. Data in `~/Library/Application Support/Ticker/` — never ad-hoc locations
+
+---
+
+## Versioning
+
+- **Marketing version**: `YYYY.MM.patch` (e.g., `2025.12.1`)
+- **Build number**: `git rev-list --count HEAD` (monotonic)
+- **Bundle ID**: `io.ticker.app`
+
+---
+
+## Documentation Index
+
+| Document | Purpose |
+|----------|---------|
+| `CLAUDE.md` | This file — architecture, commands, standards |
+| `AGENTS.md` | Agent-specific pitfalls, editor invariants |
+| `docs/RELEASE_RUNBOOK.md` | Step-by-step signed release process |
+| `docs/DATA_MIGRATIONS.md` | Migration versioning, backup strategy |
+| `docs/MAC_DISTRIBUTION.md` | Signing, notarization, Sparkle setup |
+| `docs/ENGINEERING_WORKFLOW.md` | Issue/PR templates, branch naming, CI |
+| `docs/ALPHA_READINESS_CHECKLIST.md` | Go/no-go criteria for alpha |
+| `CHANGELOG.md` | User-facing release notes |
+
+---
+
+## Adding New Swift Files
+
+When creating new `.swift` files, they must be added to `Ticker.xcodeproj/project.pbxproj` in 4 places:
+
+1. **PBXBuildFile section** — `A... /* File.swift in Sources */`
+2. **PBXFileReference section** — `B... /* File.swift */`
+3. **PBXGroup children** — Add to appropriate group (App, Services, Models, etc.)
+4. **PBXSourcesBuildPhase files** — Add build file reference
+
+Use existing entries as templates. IDs must be unique (continue hex sequence).
+
+---
 
 ## Strategic Guidance
 
