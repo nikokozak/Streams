@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ticker Alpha – Install & Rollback</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif; line-height: 1.5; max-width: 880px; margin: 0 auto; padding: 32px 16px; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    pre { padding: 12px; border-radius: 8px; overflow-x: auto; }
+    h1, h2 { margin: 0.2em 0 0.4em; }
+    .muted { opacity: 0.85; }
+    a { word-break: break-word; }
+    ul { padding-left: 1.2em; }
+  </style>
+</head>
+<body>
+  <h1>Ticker Alpha</h1>
+  <p class="muted">Install instructions, update behavior, and how to rollback (downgrade) to a previous version.</p>
+
+  <h2>Updates</h2>
+  <ul>
+    <li>The alpha build uses Sparkle auto-updates.</li>
+    <li>The appcast lives at <a href="/Streams/appcast-alpha.xml">/Streams/appcast-alpha.xml</a>.</li>
+    <li>Update payloads (the <code>Ticker-YYYY.MM.patch.zip</code>) are hosted on GitHub Releases and must be publicly downloadable.</li>
+  </ul>
+
+  <h2>Fresh install (first time)</h2>
+  <ol>
+    <li>Download the latest alpha zip from GitHub Releases.</li>
+    <li>Unzip it to get <code>Ticker.app</code>.</li>
+    <li>Drag <code>Ticker.app</code> into <code>/Applications</code>.</li>
+    <li>Launch it from <code>/Applications</code> (recommended for Sparkle updates).</li>
+  </ol>
+
+  <h2>Rollback / downgrade</h2>
+  <p>If a new alpha has a regression, you can install an older release manually.</p>
+  <ol>
+    <li>Quit Ticker completely.</li>
+    <li>Download the older zip you want from GitHub Releases (e.g. <code>Ticker-2025.12.1.zip</code>).</li>
+    <li>Unzip it to get <code>Ticker.app</code>.</li>
+    <li>In <code>/Applications</code>, rename the current app (optional): <code>Ticker.app</code> → <code>Ticker.backup.app</code>.</li>
+    <li>Drag the older <code>Ticker.app</code> into <code>/Applications</code>.</li>
+    <li>Launch it.</li>
+  </ol>
+  <p class="muted">Note: Sparkle will offer to update again if the appcast contains a newer build. If you need to stay pinned temporarily, ignore the update prompt (or disable automatic update checks if the app exposes that setting).</p>
+
+  <h2>Common problems</h2>
+  <ul>
+    <li><strong>“App is damaged” / blocked by Gatekeeper:</strong> alpha builds should be signed + notarized. If you still see a block, ensure you launched the copy in <code>/Applications</code> and re-download the zip from Releases.</li>
+    <li><strong>Update download fails:</strong> confirm the zip URL in <code>appcast-alpha.xml</code> is reachable in a private/incognito browser window.</li>
+  </ul>
+
+  <hr />
+  <p class="muted">If you’re helping test, please include your macOS version, the Ticker version, and steps to reproduce when reporting issues.</p>
+</body>
+</html>
