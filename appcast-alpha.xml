@@ -1,15 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?><rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><title>Ticker Alpha</title>
-  <item>
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel><title>Ticker Alpha</title>
+  <item><title>Version 2025.12.2</title><pubDate>Mon, 22 Dec 2025 02:38:07 +0000</pubDate><sparkle:version>123</sparkle:version><sparkle:shortVersionString>2025.12.2</sparkle:shortVersionString><sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion><enclosure url="https://github.com/nikokozak/Streams/releases/download/v2025.12.2/Ticker-2025.12.2.zip" type="application/octet-stream" sparkle:edSignature="V5uzVojGPx2zeo0s2m/2LFFaSb/WL70lNsk+edIJL5w++th5AqbOzgh/k7fxG+rkeUQzwIHuXoaXioinqVfzAQ==" length="9267891" /></item><item>
     <title>Version 2025.12.1</title>
     <pubDate>Sat, 21 Dec 2025 12:00:00 +0000</pubDate>
     <sparkle:version>116</sparkle:version>
     <sparkle:shortVersionString>2025.12.1</sparkle:shortVersionString>
     <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-    <enclosure
-      url="https://github.com/nikokozak/Streams/releases/download/v2025.12.1/Ticker-2025.12.1.zip"
-      type="application/octet-stream"
-      sparkle:edSignature="8hR3BvdWsoOUURhwCM07T55cu8Dw8T/wfdImMc0P+5iJXyi9/UE7fTASvUczeCOrRGZ04MncGK/llT0H8KNdBA=="
-      length="9259129"
-      />
+    <enclosure url="https://github.com/nikokozak/Streams/releases/download/v2025.12.1/Ticker-2025.12.1.zip" type="application/octet-stream" sparkle:edSignature="8hR3BvdWsoOUURhwCM07T55cu8Dw8T/wfdImMc0P+5iJXyi9/UE7fTASvUczeCOrRGZ04MncGK/llT0H8KNdBA==" length="9259129" />
   </item>
 </channel></rss>
