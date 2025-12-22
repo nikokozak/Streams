@@ -410,8 +410,8 @@ extract_sign_update_fields() {
   local output="$1"
   local signature length
 
-  signature="$(echo "$output" | sed -n 's/.*sparkle:edSignature=\"\\([^\"]*\\)\".*/\\1/p' | tail -n 1)"
-  length="$(echo "$output" | sed -n 's/.*length=\"\\([0-9]*\\)\".*/\\1/p' | tail -n 1)"
+  signature="$(echo "$output" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p' | tail -n 1)"
+  length="$(echo "$output" | sed -n 's/.*length="\([0-9]*\)".*/\1/p' | tail -n 1)"
 
   if [[ -z "$signature" || -z "$length" ]]; then
     echo "Failed to parse sign_update output:" >&2
