@@ -39,6 +39,10 @@ final class WebViewManager: NSObject {
         let schemeHandler = AssetSchemeHandler()
         config.setURLSchemeHandler(schemeHandler, forURLScheme: "ticker-asset")
 
+        // Register custom URL scheme handler for bundled web resources (Release mode)
+        let bundleHandler = BundleSchemeHandler()
+        config.setURLSchemeHandler(bundleHandler, forURLScheme: "ticker-bundle")
+
         self.webView = DroppableWebView(frame: .zero, configuration: config)
 
         // Initialize services
@@ -276,14 +280,14 @@ final class WebViewManager: NSObject {
 
     private func loadWebContent() {
         // In development, load from Vite dev server
-        // In production, load from bundled resources
+        // In production, load via custom scheme to avoid file:// URL issues with ES modules
         #if DEBUG
         if let url = URL(string: "http://localhost:5173") {
             webView.load(URLRequest(url: url))
         }
         #else
-        if let resourceURL = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "Resources") {
-            webView.loadFileURL(resourceURL, allowingReadAccessTo: resourceURL.deletingLastPathComponent())
+        if let url = URL(string: "ticker-bundle:///index.html") {
+            webView.load(URLRequest(url: url))
         }
         #endif
     }
