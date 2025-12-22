@@ -33,7 +33,19 @@ Sparkle must be able to download your update zip **without being logged in to Gi
 
 ### Sparkle CLI Tools Setup (one-time)
 
-SPM provides the Sparkle framework, but release tools (`sign_update`, `generate_appcast`) should be downloaded separately:
+SPM provides the Sparkle framework, but release tools (`sign_update`, `generate_appcast`) are separate binaries.
+
+**Recommended (replicable): install from SwiftPM artifacts**
+
+After you’ve run any build (so SwiftPM resolves packages), install the tools into the repo (gitignored):
+
+```bash
+./tickerctl.sh install-sparkle-tools
+```
+
+Tools will be at `tools/sparkle/Sparkle/bin/sign_update` and `tools/sparkle/Sparkle/bin/generate_appcast`.
+
+**Fallback: download Sparkle release archive**
 
 ```bash
 # Download Sparkle release (check for latest version)
@@ -51,10 +63,7 @@ Add to `.gitignore`:
 tools/sparkle/
 ```
 
-Tools are now at `tools/sparkle/bin/sign_update` and `tools/sparkle/bin/generate_appcast`.
-
-> Note: depending on the Sparkle archive layout, the tools may be under
-> `tools/sparkle/Sparkle/bin/` instead. Adjust your config accordingly.
+Depending on the Sparkle archive layout, the tools may be under `tools/sparkle/Sparkle/bin/`.
 
 ### GitHub Pages Setup (one-time)
 

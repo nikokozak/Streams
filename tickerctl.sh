@@ -9,6 +9,7 @@ Usage: ./tickerctl.sh [command] [options]
 Commands:
   menu                 Interactive menu (default)
   clean-derived-data    Delete repo-local Xcode DerivedData (fixes stale SPM artifacts)
+  install-sparkle-tools  Install Sparkle CLI tools into ./tools/sparkle (from SwiftPM artifacts)
   build-dev            Build Debug app (unsigned)
   run-dev              Build Debug + run (starts Vite dev server)
   build-prod           Build Release app (unsigned, bundles web UI)
@@ -33,7 +34,7 @@ Config (optional):
   Create `tickerctl.local.sh` (gitignored) to set defaults:
     SIGN_IDENTITY='Developer ID Application: Name (TEAMID)'
     NOTARY_PROFILE='AC_PASSWORD'
-    SPARKLE_BIN='./tools/sparkle/bin'
+    SPARKLE_BIN='./tools/sparkle/Sparkle/bin'
     UPDATES_REPO_SLUG='owner/repo'         # where the update zip is hosted
     APPCAST_REPO_DIR='/path/to/gh-pages-worktree'   # recommended: separate worktree
     APPCAST_FILENAME='appcast-alpha.xml'
@@ -56,13 +57,14 @@ fi
 
 DERIVED_DATA_PATH_DEFAULT="$ROOT_DIR/.build/xcode"
 RELEASE_DERIVED_DATA_PATH_DEFAULT="$ROOT_DIR/.build/xcode-release"
+SPARKLE_TOOLS_ROOT_DEFAULT="$ROOT_DIR/tools/sparkle/Sparkle"
 # Ignore a globally-exported DERIVED_DATA_PATH (stale after repo moves).
 # Use --derived-data or TICKER_DERIVED_DATA_PATH instead.
 DERIVED_DATA_PATH="${TICKER_DERIVED_DATA_PATH:-$DERIVED_DATA_PATH_DEFAULT}"
 
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-AC_PASSWORD}"
-SPARKLE_BIN="${SPARKLE_BIN:-$ROOT_DIR/tools/sparkle/bin}"
+SPARKLE_BIN="${SPARKLE_BIN:-$SPARKLE_TOOLS_ROOT_DEFAULT/bin}"
 UPDATES_REPO_SLUG="${UPDATES_REPO_SLUG:-}"
 UPDATES_RELEASE_TARGET="${UPDATES_RELEASE_TARGET:-}"
 APPCAST_REPO_DIR="${APPCAST_REPO_DIR:-}"
@@ -121,6 +123,46 @@ safe_delete_repo_dir() {
   else
     echo "No directory found at: $dir"
   fi
+}
+
+sparkle_artifact_root_candidates() {
+  local derived_data_path="${1:-}"
+
+  if [[ -n "$derived_data_path" ]]; then
+    echo "$derived_data_path/SourcePackages/artifacts/sparkle/Sparkle"
+  fi
+  echo "$ROOT_DIR/.build/xcode-release/SourcePackages/artifacts/sparkle/Sparkle"
+  echo "$ROOT_DIR/.build/xcode/SourcePackages/artifacts/sparkle/Sparkle"
+}
+
+install_sparkle_tools_from_artifacts() {
+  local preferred_derived_data_path="${1:-}"
+
+  require_cmd ditto
+
+  local source_root=""
+  while IFS= read -r candidate; do
+    if [[ -x "$candidate/bin/sign_update" ]]; then
+      source_root="$candidate"
+      break
+    fi
+  done < <(sparkle_artifact_root_candidates "$preferred_derived_data_path")
+
+  if [[ -z "$source_root" ]]; then
+    echo "Could not find Sparkle tools in SwiftPM artifacts." >&2
+    echo "Expected one of:" >&2
+    sparkle_artifact_root_candidates "$preferred_derived_data_path" | sed 's/^/  - /' >&2
+    echo "Tip: run a build first so SwiftPM resolves packages, then re-run install-sparkle-tools." >&2
+    return 1
+  fi
+
+  mkdir -p "$SPARKLE_TOOLS_ROOT_DEFAULT"
+  ditto "$source_root" "$SPARKLE_TOOLS_ROOT_DEFAULT"
+  find "$SPARKLE_TOOLS_ROOT_DEFAULT/bin" -maxdepth 1 -type f -exec chmod +x {} + 2>/dev/null || true
+
+  echo "Installed Sparkle tools:"
+  echo "  from: $source_root"
+  echo "  to:   $SPARKLE_TOOLS_ROOT_DEFAULT"
 }
 
 build_number() {
@@ -293,6 +335,75 @@ EOF
   for d in "${dirs[@]}"; do
     safe_delete_repo_dir "$d"
   done
+}
+
+cmd_install_sparkle_tools() {
+  local preferred_derived_data_path=""
+  local -a remaining=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+    --derived-data)
+      preferred_derived_data_path="$2"
+      shift 2
+      ;;
+    -h | --help)
+      cat <<'EOF'
+Usage: ./tickerctl.sh install-sparkle-tools [options]
+
+Installs Sparkle CLI tools (sign_update, generate_appcast, etc.) into:
+  ./tools/sparkle/Sparkle/bin
+
+The tools are copied from SwiftPM artifact bundles under a DerivedData path.
+
+Options:
+  --derived-data PATH   Prefer artifacts under this DerivedData path
+EOF
+      exit 0
+      ;;
+    *)
+      remaining+=("$1")
+      shift
+      ;;
+    esac
+  done
+
+  if (( ${#remaining[@]} > 0 )); then
+    echo "Unknown arguments: ${remaining[*]}" >&2
+    exit 2
+  fi
+
+  install_sparkle_tools_from_artifacts "$preferred_derived_data_path"
+}
+
+ensure_sparkle_bin() {
+  if [[ -x "$SPARKLE_BIN/sign_update" ]]; then
+    return 0
+  fi
+
+  local -a candidates=(
+    "$SPARKLE_TOOLS_ROOT_DEFAULT/bin"
+    "$ROOT_DIR/tools/sparkle/bin"
+  )
+  for c in "${candidates[@]}"; do
+    if [[ -x "$c/sign_update" ]]; then
+      SPARKLE_BIN="$c"
+      return 0
+    fi
+  done
+
+  echo "Sparkle sign_update not found; installing Sparkle CLI tools into repo…" >&2
+  cmd_install_sparkle_tools --derived-data "$DERIVED_DATA_PATH"
+
+  SPARKLE_BIN="$SPARKLE_TOOLS_ROOT_DEFAULT/bin"
+  if [[ -x "$SPARKLE_BIN/sign_update" ]]; then
+    return 0
+  fi
+
+  echo "Sparkle sign_update still not found after install." >&2
+  echo "Tried:" >&2
+  printf '  - %s\n' "${candidates[@]/%//sign_update}" >&2
+  exit 1
 }
 
 extract_sign_update_fields() {
@@ -481,17 +592,7 @@ cmd_release_alpha() {
   local zip_path="$release_out_dir/$zip_name"
   (cd "$release_dd/Build/Products/Release" && ditto -c -k --sequesterRsrc --keepParent "Ticker.app" "$zip_path")
 
-  if [[ ! -x "$SPARKLE_BIN/sign_update" ]]; then
-    # Common archive layout: tools/sparkle/Sparkle/bin/*
-    local alt_bin="$ROOT_DIR/tools/sparkle/Sparkle/bin"
-    if [[ -x "$alt_bin/sign_update" ]]; then
-      SPARKLE_BIN="$alt_bin"
-    else
-      echo "Sparkle sign_update not found/executable at: $SPARKLE_BIN/sign_update" >&2
-      echo "If you extracted a Sparkle .tar.xz, the tools may live at: $alt_bin/sign_update" >&2
-      exit 1
-    fi
-  fi
+  ensure_sparkle_bin
 
   echo "Signing update zip with Sparkle…"
   local sign_output
@@ -681,6 +782,7 @@ main() {
   case "$cmd" in
   menu) cmd_menu ;;
   clean-derived-data) cmd_clean_derived_data "$@" ;;
+  install-sparkle-tools) cmd_install_sparkle_tools "$@" ;;
   build-dev) cmd_build_dev ;;
   run-dev) cmd_run_dev ;;
   build-prod) cmd_build_prod ;;
