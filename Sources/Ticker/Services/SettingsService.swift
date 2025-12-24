@@ -15,6 +15,7 @@ final class SettingsService {
         static let appearance = "appearance"
         static let hasCompletedKeychainMigration = "has_completed_keychain_migration"
         static let hasCompletedOnboarding = "has_completed_onboarding"
+        static let diagnosticsEnabled = "diagnostics_enabled"
         // Legacy keys (for migration)
         static let legacyOpenaiAPIKey = "openai_api_key"
         static let legacyAnthropicAPIKey = "anthropic_api_key"
@@ -198,6 +199,21 @@ final class SettingsService {
         }
     }
 
+    // MARK: - Diagnostics
+
+    /// Whether to send diagnostic data (app version, request IDs, etc.)
+    /// Defaults to true if not explicitly set
+    var diagnosticsEnabled: Bool {
+        get {
+            // Default to true if not set
+            if defaults.object(forKey: Keys.diagnosticsEnabled) == nil {
+                return true
+            }
+            return defaults.bool(forKey: Keys.diagnosticsEnabled)
+        }
+        set { defaults.set(newValue, forKey: Keys.diagnosticsEnabled) }
+    }
+
     // MARK: - Settings Dictionary (for bridge)
 
     /// Get all settings as a dictionary for sending to React
@@ -208,7 +224,8 @@ final class SettingsService {
             "hasPerplexityKey": isPerplexityConfigured,
             "smartRoutingEnabled": smartRoutingEnabled,
             "defaultModel": defaultModel.rawValue,
-            "appearance": appearance.rawValue
+            "appearance": appearance.rawValue,
+            "diagnosticsEnabled": diagnosticsEnabled
         ]
 
         // Include masked key preview if set

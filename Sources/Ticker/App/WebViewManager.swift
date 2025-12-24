@@ -1011,6 +1011,11 @@ final class WebViewManager: NSObject {
                 NotificationCenter.default.post(name: .appearanceDidChange, object: nil)
             }
 
+            // Save diagnostics setting if provided
+            if let diagnosticsEnabled = payload["diagnosticsEnabled"]?.value as? Bool {
+                SettingsService.shared.diagnosticsEnabled = diagnosticsEnabled
+            }
+
             // Send back updated settings
             let settings = settingsWithClassifierState()
             bridgeService.send(BridgeMessage(
