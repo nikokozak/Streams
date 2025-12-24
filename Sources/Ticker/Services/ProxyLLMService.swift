@@ -101,6 +101,9 @@ final class ProxyLLMService: LLMProvider {
             // Extract request ID from response (proxy may override)
             let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId
 
+            // Record request ID for support bundle (D4)
+            await deviceKeyService.recordRequestId(responseRequestId, endpoint: "llm")
+
             // Handle non-200 responses
             if httpResponse.statusCode != 200 {
                 // Extract Retry-After header if present (for rate limits)

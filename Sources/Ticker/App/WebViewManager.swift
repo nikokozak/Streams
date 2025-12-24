@@ -1160,6 +1160,59 @@ final class WebViewManager: NSObject {
                 }
             }
 
+        // MARK: - Feedback & Support Bundle (D4/D5)
+
+        case "submitFeedback":
+            guard let callbackId = message.callbackId,
+                  let payload = message.payload,
+                  let feedbackType = payload["type"]?.value as? String,
+                  let title = payload["title"]?.value as? String else {
+                print("Invalid submitFeedback payload")
+                return
+            }
+            let description = payload["description"]?.value as? String
+            let screenshotBase64 = payload["screenshot"]?.value as? String
+            let screenshotContentType = payload["screenshotContentType"]?.value as? String
+
+            Task {
+                do {
+                    let feedbackId = try await DeviceKeyService.shared.submitFeedback(
+                        type: feedbackType,
+                        title: title,
+                        description: description,
+                        screenshotBase64: screenshotBase64,
+                        screenshotContentType: screenshotContentType
+                    )
+                    await MainActor.run {
+                        bridgeService.respond(to: callbackId, with: [
+                            "success": AnyCodable(true),
+                            "feedbackId": AnyCodable(feedbackId)
+                        ])
+                    }
+                } catch {
+                    await MainActor.run {
+                        bridgeService.respond(to: callbackId, with: [
+                            "success": AnyCodable(false),
+                            "error": AnyCodable(error.localizedDescription)
+                        ])
+                    }
+                }
+            }
+
+        case "getSupportBundle":
+            guard let callbackId = message.callbackId else {
+                print("Invalid getSupportBundle payload")
+                return
+            }
+            Task {
+                let bundle = await DeviceKeyService.shared.getSupportBundle()
+                await MainActor.run {
+                    bridgeService.respond(to: callbackId, with: [
+                        "bundle": AnyCodable(bundle)
+                    ])
+                }
+            }
+
         case "currentStreamId":
             // Response from frontend with current stream ID for file drops
             guard let payload = message.payload,

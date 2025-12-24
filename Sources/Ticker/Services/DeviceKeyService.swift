@@ -131,6 +131,9 @@ enum DeviceKeyError: LocalizedError {
     case keyRevoked
     case boundToOtherDevice
     case rateLimited
+    case payloadTooLarge
+    case notFound
+    case forbidden
     case serverError(Int)
     case networkError(Error)
 
@@ -148,6 +151,12 @@ enum DeviceKeyError: LocalizedError {
             return "This key is bound to a different device. Contact support for assistance."
         case .rateLimited:
             return "Too many requests. Please try again in a minute."
+        case .payloadTooLarge:
+            return "Attachment is too large. Maximum size is 10MB."
+        case .notFound:
+            return "Resource not found."
+        case .forbidden:
+            return "Access denied."
         case .serverError(let code):
             return "Server error (\(code)). Please try again later."
         case .networkError:
@@ -162,10 +171,53 @@ enum DeviceKeyError: LocalizedError {
         case .keyRevoked: return .blockedRevoked
         case .boundToOtherDevice: return .blockedBoundElsewhere
         case .networkError: return .degradedOffline
-        case .rateLimited, .serverError, .invalidURL, .invalidResponse:
+        case .rateLimited, .serverError, .invalidURL, .invalidResponse,
+             .payloadTooLarge, .notFound, .forbidden:
             // These are transient/non-auth errors - don't change auth state
             return nil
         }
+    }
+}
+
+// MARK: - Request ID Entry (D4)
+
+/// Entry in the request ID ring buffer for support bundle
+struct RequestIdEntry {
+    let requestId: String
+    let timestamp: Date
+    let endpoint: String  // "llm", "feedback", "auth", etc.
+}
+
+// MARK: - Feedback Response Types
+
+/// Response from proxy `/v1/feedback` endpoint
+struct FeedbackResponse: Codable {
+    let feedbackId: String
+
+    enum CodingKeys: String, CodingKey {
+        case feedbackId = "feedback_id"
+    }
+}
+
+/// Response from proxy `/v1/feedback/:id/attachments` endpoint
+struct AttachmentCreateResponse: Codable {
+    let attachmentId: String
+    let upload: Upload
+
+    struct Upload: Codable {
+        let url: String
+        let headers: [String: String]
+        let expiresAt: String
+
+        enum CodingKeys: String, CodingKey {
+            case url, headers
+            case expiresAt = "expires_at"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case attachmentId = "attachment_id"
+        case upload
     }
 }
 
@@ -184,6 +236,12 @@ actor DeviceKeyService {
     private var cachedLimits: ProxyAuthValidationResponse.Limits?
     /// Cached usage from last validation
     private var cachedUsage: ProxyAuthValidationResponse.Usage?
+
+    // MARK: - Request ID Tracking (D4)
+
+    /// Ring buffer of recent request IDs (last 50) for support bundle
+    private var recentRequestIds: [RequestIdEntry] = []
+    private let maxRequestIds = 50
 
     /// Callback invoked when auth state changes (called on MainActor)
     /// Note: nonisolated to allow setting from outside actor context
@@ -379,6 +437,324 @@ actor DeviceKeyService {
             "X-Ticker-Platform": "macOS",
             "X-Ticker-OS-Version": osVersion()
         ]
+    }
+
+    // MARK: - Request ID Tracking (D4)
+
+    /// Record a request ID for inclusion in support bundle
+    func recordRequestId(_ id: String, endpoint: String) {
+        recentRequestIds.append(RequestIdEntry(
+            requestId: id,
+            timestamp: Date(),
+            endpoint: endpoint
+        ))
+        // Keep only the last N entries
+        if recentRequestIds.count > maxRequestIds {
+            recentRequestIds.removeFirst()
+        }
+    }
+
+    // MARK: - Support Bundle (D4)
+
+    /// Generate support bundle for troubleshooting (no keys or content)
+    func getSupportBundle() -> [String: Any] {
+        let data = loadOrCreate()
+        let formatter = ISO8601DateFormatter()
+
+        return [
+            "generated_at": formatter.string(from: Date()),
+            "app_version": appVersion(),
+            "build_number": Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+            "os_version": osVersion(),
+            "device_id": data.deviceId,
+            "support_id": data.supportId ?? "none",
+            "auth_state": currentState.rawValue,
+            "recent_request_ids": recentRequestIds.map { entry in
+                [
+                    "request_id": entry.requestId,
+                    "timestamp": formatter.string(from: entry.timestamp),
+                    "endpoint": entry.endpoint
+                ]
+            },
+            "usage": [
+                "tokens_today": cachedUsage?.tokensToday ?? 0,
+                "tokens_this_month": cachedUsage?.tokensThisMonth ?? 0
+            ]
+        ]
+    }
+
+    // MARK: - Feedback Submission (D5)
+
+    /// Maximum attachment size (10MB per OpenAPI spec)
+    private static let maxAttachmentBytes = 10 * 1024 * 1024
+
+    /// Get the most recent LLM request ID for feedback correlation
+    private func getMostRecentLLMRequestId() -> String? {
+        recentRequestIds.last { $0.endpoint == "llm" }?.requestId
+    }
+
+    /// Submit feedback (bug report or feature request) to proxy
+    /// - Parameters:
+    ///   - type: "bug" or "feature"
+    ///   - title: Short summary
+    ///   - description: Optional detailed description
+    ///   - screenshotBase64: Optional base64-encoded screenshot (without data: prefix)
+    ///   - screenshotContentType: MIME type of screenshot (e.g., "image/png", "image/jpeg")
+    /// - Returns: Feedback ID for user reference (e.g., "fb_abc123")
+    func submitFeedback(
+        type: String,
+        title: String,
+        description: String?,
+        screenshotBase64: String?,
+        screenshotContentType: String? = nil
+    ) async throws -> String {
+        guard let credentials = getCredentials() else {
+            throw DeviceKeyError.invalidKey
+        }
+
+        // Step 1: Submit feedback with metadata (support bundle)
+        let feedbackId = try await postFeedback(
+            type: type,
+            title: title,
+            description: description,
+            deviceKey: credentials.deviceKey
+        )
+
+        // Step 2: If screenshot provided, upload as attachment
+        if let base64 = screenshotBase64,
+           let imageData = Data(base64Encoded: base64) {
+            // Enforce 10MB limit
+            guard imageData.count <= Self.maxAttachmentBytes else {
+                print("[DeviceKeyService] Attachment too large: \(imageData.count) bytes (max \(Self.maxAttachmentBytes))")
+                throw DeviceKeyError.payloadTooLarge
+            }
+
+            do {
+                let contentType = screenshotContentType ?? "image/png"
+                let fileExtension = contentType.components(separatedBy: "/").last ?? "png"
+                try await uploadAttachment(
+                    feedbackId: feedbackId,
+                    imageData: imageData,
+                    contentType: contentType,
+                    filename: "screenshot.\(fileExtension)",
+                    deviceKey: credentials.deviceKey
+                )
+            } catch {
+                // Log but don't fail the whole feedback submission
+                print("[DeviceKeyService] Attachment upload failed: \(error)")
+            }
+        }
+
+        return feedbackId
+    }
+
+    /// POST feedback to proxy
+    private func postFeedback(
+        type: String,
+        title: String,
+        description: String?,
+        deviceKey: String
+    ) async throws -> String {
+        guard let url = URL(string: "\(proxyBaseURL)/v1/feedback") else {
+            throw DeviceKeyError.invalidURL
+        }
+
+        // Build request body with device_key in body (not header)
+        var requestBody: [String: Any] = [
+            "device_key": deviceKey,
+            "type": type,
+            "title": title,
+            "description": description ?? "",
+            "metadata": getSupportBundle()
+        ]
+
+        // Include most recent LLM request ID for triage (P1)
+        if let relatedRequestId = getMostRecentLLMRequestId() {
+            requestBody["related_request_id"] = relatedRequestId
+        }
+
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.httpBody = bodyData
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let localRequestId = UUID().uuidString
+        request.setValue(localRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+
+        let responseData: Data
+        let response: URLResponse
+        do {
+            (responseData, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw DeviceKeyError.networkError(error)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        // Record response request ID (prefer server's, fall back to local)
+        let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localRequestId
+        recordRequestId(responseRequestId, endpoint: "feedback")
+
+        switch httpResponse.statusCode {
+        case 200:
+            let feedbackResponse = try JSONDecoder().decode(FeedbackResponse.self, from: responseData)
+            return feedbackResponse.feedbackId
+
+        case 401:
+            // Auth failed - revalidate state so UI updates
+            await revalidate()
+            throw DeviceKeyError.invalidKey
+
+        case 403:
+            throw DeviceKeyError.forbidden
+
+        case 404:
+            throw DeviceKeyError.notFound
+
+        case 413:
+            throw DeviceKeyError.payloadTooLarge
+
+        case 429:
+            throw DeviceKeyError.rateLimited
+
+        default:
+            throw DeviceKeyError.serverError(httpResponse.statusCode)
+        }
+    }
+
+    /// Upload screenshot attachment to feedback
+    /// Three-step flow: create → PUT to presigned URL → complete
+    private func uploadAttachment(
+        feedbackId: String,
+        imageData: Data,
+        contentType: String,
+        filename: String,
+        deviceKey: String
+    ) async throws {
+        // Step 1: Create attachment and get presigned URL
+        guard let createURL = URL(string: "\(proxyBaseURL)/v1/feedback/\(feedbackId)/attachments") else {
+            throw DeviceKeyError.invalidURL
+        }
+
+        let createBody: [String: Any] = [
+            "device_key": deviceKey,
+            "filename": filename,
+            "content_type": contentType,
+            "byte_size": imageData.count
+        ]
+
+        guard let createBodyData = try? JSONSerialization.data(withJSONObject: createBody) else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        var createRequest = URLRequest(url: createURL)
+        createRequest.httpMethod = "POST"
+        createRequest.httpBody = createBodyData
+        createRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let localCreateRequestId = UUID().uuidString
+        createRequest.setValue(localCreateRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+
+        let (createResponseData, createResponse) = try await URLSession.shared.data(for: createRequest)
+
+        guard let createHttpResponse = createResponse as? HTTPURLResponse else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        // Record response request ID (prefer server's)
+        let createResponseRequestId = createHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCreateRequestId
+        recordRequestId(createResponseRequestId, endpoint: "feedback-attachment")
+
+        // Handle error codes
+        switch createHttpResponse.statusCode {
+        case 200:
+            break // Continue to decode response
+        case 401:
+            await revalidate()
+            throw DeviceKeyError.invalidKey
+        case 403:
+            throw DeviceKeyError.forbidden
+        case 404:
+            throw DeviceKeyError.notFound
+        case 413:
+            throw DeviceKeyError.payloadTooLarge
+        case 429:
+            throw DeviceKeyError.rateLimited
+        default:
+            throw DeviceKeyError.serverError(createHttpResponse.statusCode)
+        }
+
+        let attachmentResponse = try JSONDecoder().decode(AttachmentCreateResponse.self, from: createResponseData)
+
+        // Step 2: PUT image data to presigned URL
+        guard let uploadURL = URL(string: attachmentResponse.upload.url) else {
+            throw DeviceKeyError.invalidURL
+        }
+
+        var uploadRequest = URLRequest(url: uploadURL)
+        uploadRequest.httpMethod = "PUT"
+        uploadRequest.httpBody = imageData
+        // Add headers from presigned URL response
+        for (key, value) in attachmentResponse.upload.headers {
+            uploadRequest.setValue(value, forHTTPHeaderField: key)
+        }
+
+        let (_, uploadResponse) = try await URLSession.shared.data(for: uploadRequest)
+        guard let uploadHttpResponse = uploadResponse as? HTTPURLResponse,
+              (200...299).contains(uploadHttpResponse.statusCode) else {
+            throw DeviceKeyError.serverError((uploadResponse as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+
+        // Step 3: Mark attachment as complete
+        guard let completeURL = URL(string: "\(proxyBaseURL)/v1/feedback/\(feedbackId)/attachments/\(attachmentResponse.attachmentId)/complete") else {
+            throw DeviceKeyError.invalidURL
+        }
+
+        let completeBody: [String: Any] = ["device_key": deviceKey]
+        guard let completeBodyData = try? JSONSerialization.data(withJSONObject: completeBody) else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        var completeRequest = URLRequest(url: completeURL)
+        completeRequest.httpMethod = "POST"
+        completeRequest.httpBody = completeBodyData
+        completeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let localCompleteRequestId = UUID().uuidString
+        completeRequest.setValue(localCompleteRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+
+        let (_, completeResponse) = try await URLSession.shared.data(for: completeRequest)
+
+        guard let completeHttpResponse = completeResponse as? HTTPURLResponse else {
+            throw DeviceKeyError.invalidResponse
+        }
+
+        // Record response request ID (prefer server's)
+        let completeResponseRequestId = completeHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCompleteRequestId
+        recordRequestId(completeResponseRequestId, endpoint: "feedback-attachment-complete")
+
+        // Handle error codes
+        switch completeHttpResponse.statusCode {
+        case 200:
+            break // Success
+        case 401:
+            await revalidate()
+            throw DeviceKeyError.invalidKey
+        case 403:
+            throw DeviceKeyError.forbidden
+        case 404:
+            throw DeviceKeyError.notFound
+        case 429:
+            throw DeviceKeyError.rateLimited
+        default:
+            throw DeviceKeyError.serverError(completeHttpResponse.statusCode)
+        }
     }
 
     // MARK: - Private Implementation

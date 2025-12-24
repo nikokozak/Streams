@@ -75,6 +75,19 @@ export function Settings({ onClose }: SettingsProps) {
   const [deviceKeyValidating, setDeviceKeyValidating] = useState(false);
   const [deviceKeyError, setDeviceKeyError] = useState<string | null>(null);
 
+  // Feedback form state (D5)
+  const [feedbackType, setFeedbackType] = useState<'bug' | 'feature'>('bug');
+  const [feedbackTitle, setFeedbackTitle] = useState('');
+  const [feedbackDesc, setFeedbackDesc] = useState('');
+  const [feedbackScreenshot, setFeedbackScreenshot] = useState<string | null>(null);
+  const [feedbackScreenshotType, setFeedbackScreenshotType] = useState<string>('image/png');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSuccess, setFeedbackSuccess] = useState<string | null>(null);
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
+  // Maximum attachment size (10MB per OpenAPI spec)
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
   // Load settings on mount
   useEffect(() => {
     const unsubscribe = bridge.onMessage((message) => {
@@ -141,6 +154,118 @@ export function Settings({ onClose }: SettingsProps) {
     } catch (err) {
       console.error('Failed to clear device key:', err);
     }
+  };
+
+  // Submit feedback (D5)
+  const handleSubmitFeedback = async () => {
+    if (!feedbackTitle.trim()) return;
+
+    setFeedbackSubmitting(true);
+    setFeedbackError(null);
+    setFeedbackSuccess(null);
+
+    try {
+      const result = await bridge.sendAsync<{
+        success: boolean;
+        feedbackId?: string;
+        error?: string;
+      }>('submitFeedback', {
+        type: feedbackType,
+        title: feedbackTitle.trim(),
+        description: feedbackDesc.trim() || undefined,
+        screenshot: feedbackScreenshot || undefined,
+        screenshotContentType: feedbackScreenshot ? feedbackScreenshotType : undefined,
+      });
+
+      if (result.success && result.feedbackId) {
+        setFeedbackSuccess(result.feedbackId);
+        // Clear form
+        setFeedbackTitle('');
+        setFeedbackDesc('');
+        setFeedbackScreenshot(null);
+        setFeedbackScreenshotType('image/png');
+      } else {
+        setFeedbackError(result.error || 'Failed to submit feedback');
+      }
+    } catch (err) {
+      setFeedbackError(err instanceof Error ? err.message : 'Failed to submit feedback');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  // Copy support bundle to clipboard (D5)
+  const handleCopySupportBundle = async () => {
+    try {
+      const result = await bridge.sendAsync<{ bundle: Record<string, unknown> }>('getSupportBundle');
+      const bundleJson = JSON.stringify(result.bundle, null, 2);
+      await navigator.clipboard.writeText(bundleJson);
+      // Could show a toast here, but for simplicity just alert
+      alert('Support bundle copied to clipboard');
+    } catch (err) {
+      console.error('Failed to copy support bundle:', err);
+      alert('Failed to copy support bundle');
+    }
+  };
+
+  // Handle image paste/drop for feedback screenshot (D5)
+  const handleImagePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData.items;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          // Check size limit (10MB)
+          if (file.size > MAX_ATTACHMENT_BYTES) {
+            setFeedbackError('Screenshot is too large. Maximum size is 10MB.');
+            return;
+          }
+          const contentType = file.type;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            const dataUrl = event.target?.result as string;
+            // Extract base64 part (remove data:image/...;base64, prefix)
+            const base64 = dataUrl.split(',')[1];
+            setFeedbackScreenshot(base64);
+            setFeedbackScreenshotType(contentType);
+            setFeedbackError(null);
+          };
+          reader.readAsDataURL(file);
+        }
+        break;
+      }
+    }
+  };
+
+  const handleImageDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (file && file.type.startsWith('image/')) {
+      // Check size limit (10MB)
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setFeedbackError('Screenshot is too large. Maximum size is 10MB.');
+        return;
+      }
+      const contentType = file.type;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const dataUrl = event.target?.result as string;
+        const base64 = dataUrl.split(',')[1];
+        setFeedbackScreenshot(base64);
+        setFeedbackScreenshotType(contentType);
+        setFeedbackError(null);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const clearScreenshot = () => {
+    setFeedbackScreenshot(null);
+    setFeedbackScreenshotType('image/png');
   };
 
   const handleSaveOpenAI = () => {
@@ -292,6 +417,116 @@ export function Settings({ onClose }: SettingsProps) {
             <h2>Usage</h2>
             <div className="settings-field">
               <UsageDisplay limits={proxyAuth.limits} usage={proxyAuth.usage} />
+            </div>
+          </section>
+        )}
+
+        {/* Testing section - only visible when connected (D5) */}
+        {(proxyAuth?.state === 'active' || proxyAuth?.state === 'degradedOffline') && (
+          <section className="settings-section">
+            <h2>Testing</h2>
+            <div className="settings-field">
+              <p className="settings-hint" style={{ marginTop: 0 }}>
+                Help improve Ticker by reporting bugs or suggesting features.
+              </p>
+
+              {/* Feedback type selector */}
+              <div className="settings-feedback-type">
+                <button
+                  type="button"
+                  className={feedbackType === 'bug' ? 'active' : ''}
+                  onClick={() => setFeedbackType('bug')}
+                >
+                  Report Bug
+                </button>
+                <button
+                  type="button"
+                  className={feedbackType === 'feature' ? 'active' : ''}
+                  onClick={() => setFeedbackType('feature')}
+                >
+                  Request Feature
+                </button>
+              </div>
+
+              {/* Form fields */}
+              <input
+                type="text"
+                className="settings-feedback-title"
+                placeholder="Title (required)"
+                value={feedbackTitle}
+                onChange={(e) => setFeedbackTitle(e.target.value)}
+                disabled={feedbackSubmitting}
+              />
+              <textarea
+                className="settings-feedback-desc"
+                placeholder="Description (optional)"
+                value={feedbackDesc}
+                onChange={(e) => setFeedbackDesc(e.target.value)}
+                disabled={feedbackSubmitting}
+                rows={4}
+              />
+
+              {/* Screenshot drop zone */}
+              <div
+                className="settings-screenshot-drop"
+                onDrop={handleImageDrop}
+                onDragOver={handleDragOver}
+                onPaste={handleImagePaste}
+                tabIndex={0}
+              >
+                {feedbackScreenshot ? (
+                  <div className="settings-screenshot-preview">
+                    <img
+                      src={`data:${feedbackScreenshotType};base64,${feedbackScreenshot}`}
+                      alt="Screenshot preview"
+                    />
+                    <button
+                      type="button"
+                      onClick={clearScreenshot}
+                      className="settings-screenshot-remove"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <span>Drag &amp; drop or paste screenshot (optional)</span>
+                )}
+              </div>
+
+              {/* Submit button */}
+              <button
+                type="button"
+                className="settings-feedback-submit"
+                onClick={handleSubmitFeedback}
+                disabled={feedbackSubmitting || !feedbackTitle.trim()}
+              >
+                {feedbackSubmitting ? 'Submitting...' : 'Submit'}
+              </button>
+
+              {/* Success/error messages */}
+              {feedbackSuccess && (
+                <p className="settings-success">
+                  Submitted! Reference: <code>{feedbackSuccess}</code>
+                </p>
+              )}
+              {feedbackError && (
+                <p className="settings-error">{feedbackError}</p>
+              )}
+            </div>
+
+            {/* Support Bundle */}
+            <div className="settings-field">
+              <label>Support Bundle</label>
+              <button
+                type="button"
+                className="settings-support-bundle-btn"
+                onClick={handleCopySupportBundle}
+              >
+                Copy to Clipboard
+              </button>
+              <p className="settings-hint">
+                Copies diagnostic info (no content or keys) for support requests.
+              </p>
             </div>
           </section>
         )}
