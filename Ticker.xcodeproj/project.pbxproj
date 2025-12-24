@@ -55,6 +55,7 @@
 		A1000001000000000029 /* KeychainService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1000001000000000029 /* KeychainService.swift */; };
 		A100000100000000002A /* SelectionReaderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000100000000002A /* SelectionReaderService.swift */; };
 		A100000100000000002C /* DeviceKeyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000100000000002C /* DeviceKeyService.swift */; };
+		A100000100000000002D /* ProxyLLMService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000100000000002D /* ProxyLLMService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +106,7 @@
 		B1000001000000000029 /* KeychainService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainService.swift; sourceTree = "<group>"; };
 		B100000100000000002A /* SelectionReaderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectionReaderService.swift; sourceTree = "<group>"; };
 		B100000100000000002C /* DeviceKeyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceKeyService.swift; sourceTree = "<group>"; };
+		B100000100000000002D /* ProxyLLMService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyLLMService.swift; sourceTree = "<group>"; };
 		F1000001000000000001 /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -214,6 +216,7 @@
 				B100000100000000001C /* PersistenceService.swift */,
 				B100000100000000001D /* ProcessingService.swift */,
 				B100000100000000001E /* Prompts.swift */,
+				B100000100000000002D /* ProxyLLMService.swift */,
 				B1000001000000000020 /* QueryClassifier.swift */,
 				B1000001000000000021 /* RAGMigrationService.swift */,
 				B1000001000000000022 /* RetrievalService.swift */,
@@ -413,6 +416,7 @@
 				A1000001000000000029 /* KeychainService.swift in Sources */,
 				A100000100000000002A /* SelectionReaderService.swift in Sources */,
 				A100000100000000002C /* DeviceKeyService.swift in Sources */,
+				A100000100000000002D /* ProxyLLMService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

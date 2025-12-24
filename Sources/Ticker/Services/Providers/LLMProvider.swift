@@ -193,3 +193,87 @@ enum LLMProviderError: LocalizedError {
         }
     }
 }
+
+// MARK: - Proxy Errors
+
+/// Quota exceeded details from proxy
+struct ProxyQuotaDetails {
+    let scope: String           // "day" or "month"
+    let limit: Int
+    let used: Int
+    let resetAt: String         // ISO8601 timestamp
+}
+
+/// Errors specific to proxy LLM requests
+enum ProxyLLMError: LocalizedError {
+    case unreachable                                // Network error
+    case invalidKey                                 // 401: key invalid/expired
+    case keyBoundElsewhere(supportId: String?)      // 401: key bound to different device
+    case rateLimited(retryAfter: Int?)              // 429: req/min exceeded
+    case quotaExceeded(details: ProxyQuotaDetails)  // 429: token budget exceeded
+    case validationError(String)                    // 400: bad request
+    case upstreamError(requestId: String?, message: String)  // 502: LLM provider error
+    case serverError(statusCode: Int, requestId: String?)    // 5xx: other server errors
+
+    var errorDescription: String? {
+        switch self {
+        case .unreachable:
+            return "AI unavailable. Check your connection."
+        case .invalidKey:
+            return "Device key invalid or expired. Please re-enter in Settings."
+        case .keyBoundElsewhere(let supportId):
+            if let id = supportId {
+                return "Key bound to another device. Contact support (ID: \(id))."
+            }
+            return "Key bound to another device. Contact support."
+        case .rateLimited(let retryAfter):
+            if let seconds = retryAfter {
+                return "Rate limit exceeded. Try again in \(seconds)s."
+            }
+            return "Rate limit exceeded. Try again in a moment."
+        case .quotaExceeded(let details):
+            let scopeLabel = details.scope == "day" ? "Daily" : "Monthly"
+            return "\(scopeLabel) quota exceeded (\(details.used)/\(details.limit) tokens)."
+        case .validationError(let message):
+            return "Request error: \(message)"
+        case .upstreamError(_, let message):
+            return "AI provider error: \(message)"
+        case .serverError(let code, _):
+            return "Server error (\(code)). Please try again."
+        }
+    }
+
+    /// Error code for bridge messaging
+    var errorCode: String {
+        switch self {
+        case .unreachable: return "proxy_unreachable"
+        case .invalidKey: return "invalid_key"
+        case .keyBoundElsewhere: return "key_bound_elsewhere"
+        case .rateLimited: return "rate_limited"
+        case .quotaExceeded: return "quota_exceeded"
+        case .validationError: return "validation_error"
+        case .upstreamError: return "upstream_error"
+        case .serverError: return "server_error"
+        }
+    }
+
+    /// Request ID if available (for support reference)
+    var requestId: String? {
+        switch self {
+        case .upstreamError(let id, _), .serverError(_, let id):
+            return id
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this error should trigger key invalidation
+    var shouldInvalidateKey: Bool {
+        switch self {
+        case .invalidKey, .keyBoundElsewhere:
+            return true
+        default:
+            return false
+        }
+    }
+}

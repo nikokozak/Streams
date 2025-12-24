@@ -8,9 +8,13 @@ final class AIOrchestrator {
     private let settings: SettingsService
     private var retrievalService: RetrievalService?
 
+    /// Proxy service for routing through Ticker proxy when device key is active
+    private let proxyService: ProxyLLMService
+
     init(settings: SettingsService = .shared, retrievalService: RetrievalService? = nil) {
         self.settings = settings
         self.retrievalService = retrievalService
+        self.proxyService = ProxyLLMService()
     }
 
     /// Set the retrieval service for RAG
@@ -61,6 +65,9 @@ final class AIOrchestrator {
         onError: @escaping (Error) -> Void,
         onModelSelected: ((String) -> Void)? = nil
     ) async {
+        // Check if we should use proxy mode (device key is active)
+        let useProxy = await DeviceKeyService.shared.currentState.isUsable
+
         // Classify if we have a classifier and smart routing is enabled
         var intent: QueryIntent = .knowledge
         if settings.smartRoutingEnabled, let classifier {
@@ -73,8 +80,8 @@ final class AIOrchestrator {
             }
         }
 
-        // Select provider based on intent
-        let selectedProvider = selectProvider(for: intent)
+        // Select provider based on intent and proxy mode
+        let selectedProvider = selectProvider(for: intent, useProxy: useProxy)
 
         guard let provider = selectedProvider else {
             onError(OrchestratorError.noProviderAvailable)
@@ -146,7 +153,14 @@ final class AIOrchestrator {
 
     // MARK: - Private
 
-    private func selectProvider(for intent: QueryIntent) -> LLMProvider? {
+    private func selectProvider(for intent: QueryIntent, useProxy: Bool = false) -> LLMProvider? {
+        // If proxy mode is active, always use proxy service
+        // The proxy handles routing to providers on the server side
+        if useProxy {
+            print("AIOrchestrator: using proxy mode")
+            return proxyService
+        }
+
         switch intent {
         case .search:
             // Prefer Perplexity for search, fall back to default model

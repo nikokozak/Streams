@@ -252,9 +252,41 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'aiError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = formatError(message.payload.error, 'AI request failed.');
-        toastStore.addToast(error, 'error');
-        store.setError(cellId, error);
+        const baseError = formatError(message.payload.error, 'AI request failed.');
+        const errorCode = message.payload.errorCode as string | undefined;
+        const requestId = message.payload.requestId as string | undefined;
+
+        // Build enhanced error message based on error type
+        let displayError = baseError;
+
+        if (errorCode === 'quota_exceeded') {
+          const scope = message.payload.quotaScope as string;
+          const resetAt = message.payload.quotaResetAt as string;
+          if (resetAt) {
+            try {
+              const resetDate = new Date(resetAt);
+              const now = new Date();
+              const hoursUntil = Math.ceil((resetDate.getTime() - now.getTime()) / (1000 * 60 * 60));
+              displayError = `${scope === 'day' ? 'Daily' : 'Monthly'} quota exceeded. Resets in ~${hoursUntil}h.`;
+            } catch {
+              displayError = baseError;
+            }
+          }
+        } else if (errorCode === 'rate_limited') {
+          const retryAfter = message.payload.retryAfter as number | undefined;
+          if (retryAfter) {
+            displayError = `Rate limit exceeded. Try again in ${retryAfter}s.`;
+          }
+        } else if (errorCode === 'invalid_key' || errorCode === 'key_bound_elsewhere') {
+          displayError = `${baseError} Check Settings to update your device key.`;
+        } else if (errorCode === 'server_error' || errorCode === 'upstream_error') {
+          if (requestId) {
+            displayError = `${baseError} (Request ID: ${requestId})`;
+          }
+        }
+
+        toastStore.addToast(displayError, 'error');
+        store.setError(cellId, displayError);
         store.completeStreaming(cellId);
       }
 
@@ -347,9 +379,17 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'modifierError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = formatError(message.payload.error, 'Modifier request failed.');
-        toastStore.addToast(`Modifier failed: ${error}`, 'error');
-        store.setError(cellId, error);
+        const baseError = formatError(message.payload.error, 'Modifier request failed.');
+        const errorCode = message.payload.errorCode as string | undefined;
+        const requestId = message.payload.requestId as string | undefined;
+
+        let displayError = `Modifier failed: ${baseError}`;
+        if (requestId && (errorCode === 'server_error' || errorCode === 'upstream_error')) {
+          displayError = `${displayError} (Request ID: ${requestId})`;
+        }
+
+        toastStore.addToast(displayError, 'error');
+        store.setError(cellId, displayError);
         store.completeModifying(cellId);
       }
 
@@ -407,10 +447,18 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
 
       if (message.type === 'blockRefreshError' && message.payload?.cellId) {
         const cellId = message.payload.cellId as string;
-        const error = formatError(message.payload.error, 'Refresh failed.');
-        console.error('[BlockRefresh] Error:', cellId, error);
-        toastStore.addToast(`Refresh failed: ${error}`, 'error');
-        store.setError(cellId, error);
+        const baseError = formatError(message.payload.error, 'Refresh failed.');
+        const errorCode = message.payload.errorCode as string | undefined;
+        const requestId = message.payload.requestId as string | undefined;
+
+        let displayError = `Refresh failed: ${baseError}`;
+        if (requestId && (errorCode === 'server_error' || errorCode === 'upstream_error')) {
+          displayError = `${displayError} (Request ID: ${requestId})`;
+        }
+
+        console.error('[BlockRefresh] Error:', cellId, displayError);
+        toastStore.addToast(displayError, 'error');
+        store.setError(cellId, displayError);
         store.completeRefreshing(cellId);
       }
       } catch (err) {
