@@ -9,6 +9,16 @@ import { isUnifiedEditorEnabled } from './utils/featureFlags';
 
 type View = 'list' | 'stream' | 'settings';
 
+// Proxy auth state (matches Swift ProxyAuthState enum)
+type ProxyAuthState =
+  | 'unregistered'
+  | 'validating'
+  | 'active'
+  | 'blockedInvalid'
+  | 'blockedRevoked'
+  | 'blockedBoundElsewhere'
+  | 'degradedOffline';
+
 export function App() {
   const [view, setView] = useState<View>('list');
   const [streams, setStreams] = useState<StreamSummary[]>([]);
@@ -17,10 +27,29 @@ export function App() {
   const [isLoadingStream, setIsLoadingStream] = useState(false);
   const clearStream = useBlockStore((state) => state.clearStream);
 
+  // Proxy auth state - gates main UI until key is validated
+  const [proxyAuthState, setProxyAuthState] = useState<ProxyAuthState>('validating');
+
+  // Load initial proxy auth state
+  useEffect(() => {
+    bridge.sendAsync<{ state: ProxyAuthState }>('loadProxyAuth')
+      .then((result) => {
+        setProxyAuthState(result.state);
+      })
+      .catch((err) => {
+        console.error('Failed to load proxy auth:', err);
+        setProxyAuthState('unregistered');
+      });
+  }, []);
+
   useEffect(() => {
     // Subscribe to bridge messages
     const unsubscribe = bridge.onMessage((message) => {
       switch (message.type) {
+        case 'proxyAuthState':
+          // State change pushed from Swift
+          setProxyAuthState(message.payload?.state as ProxyAuthState);
+          break;
         case 'streamsLoaded':
           setStreams((message.payload?.streams as StreamSummary[]) || []);
           setIsLoading(false);
@@ -138,10 +167,22 @@ export function App() {
     setView('list');
   };
 
+  // Check if auth state requires gate
+  const isAuthGated = proxyAuthState !== 'active' && proxyAuthState !== 'degradedOffline';
+
   let viewContent: JSX.Element;
 
+  // Always allow settings view (for key entry)
   if (view === 'settings') {
     viewContent = <Settings onClose={handleCloseSettings} />;
+  } else if (isAuthGated) {
+    // Gate main UI until authenticated
+    viewContent = (
+      <AuthGate
+        state={proxyAuthState}
+        onOpenSettings={handleOpenSettings}
+      />
+    );
   } else if (view === 'stream' && currentStream) {
     // Feature flag: use unified editor for cross-cell selection support
     const EditorComponent = isUnifiedEditorEnabled() ? UnifiedStreamEditor : StreamEditor;
@@ -250,6 +291,59 @@ function StreamListView({ streams, isLoading, isLoadingStream, onSelect, onCreat
               </span>
             </button>
           ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Auth gate - shown when device key is not validated
+interface AuthGateProps {
+  state: ProxyAuthState;
+  onOpenSettings: () => void;
+}
+
+function AuthGate({ state, onOpenSettings }: AuthGateProps) {
+  let title: string;
+  let message: string;
+  let showButton = true;
+
+  switch (state) {
+    case 'validating':
+      title = 'Connecting...';
+      message = 'Validating your device key with Ticker.';
+      showButton = false;
+      break;
+    case 'blockedInvalid':
+      title = 'Invalid Device Key';
+      message = 'Your device key is invalid or has expired. Please enter a valid key.';
+      break;
+    case 'blockedRevoked':
+      title = 'Key Revoked';
+      message = 'Your device key has been revoked. Contact support for assistance.';
+      break;
+    case 'blockedBoundElsewhere':
+      title = 'Key Already Used';
+      message = 'This device key is bound to a different device. Contact support for assistance.';
+      break;
+    case 'unregistered':
+    default:
+      title = 'Welcome to Ticker';
+      message = 'Enter your device key to get started.';
+      break;
+  }
+
+  return (
+    <div className="auth-gate">
+      <div className="auth-gate-content">
+        <div className="auth-gate-icon">🔑</div>
+        <h1>{title}</h1>
+        <p>{message}</p>
+        {state === 'validating' && <div className="loading-spinner" />}
+        {showButton && (
+          <button onClick={onOpenSettings} className="primary-button">
+            {state === 'unregistered' ? 'Enter Device Key' : 'Update Device Key'}
+          </button>
         )}
       </div>
     </div>

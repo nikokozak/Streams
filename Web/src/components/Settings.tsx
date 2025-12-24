@@ -20,6 +20,38 @@ interface SettingsData {
   appearance: Appearance;
 }
 
+// Proxy auth state (matches Swift ProxyAuthState enum)
+type ProxyAuthState =
+  | 'unregistered'
+  | 'validating'
+  | 'active'
+  | 'blockedInvalid'
+  | 'blockedRevoked'
+  | 'blockedBoundElsewhere'
+  | 'degradedOffline';
+
+interface Limits {
+  reqsPerMin: number | null;
+  tokensPerDay: number | null;
+  tokensPerMonth: number | null;
+}
+
+interface Usage {
+  reqsThisMinute: number | null;
+  tokensToday: number | null;
+  tokensThisMonth: number | null;
+  dayResetAt: string | null;
+  monthResetAt: string | null;
+}
+
+interface ProxyAuthStatus {
+  state: ProxyAuthState;
+  supportId: string | null;
+  deviceId: string;
+  limits: Limits | null;
+  usage: Usage | null;
+}
+
 interface SettingsProps {
   onClose: () => void;
 }
@@ -37,6 +69,12 @@ export function Settings({ onClose }: SettingsProps) {
   const [perplexitySaved, setPerplexitySaved] = useState(false);
   const [useUnifiedEditor, setUseUnifiedEditor] = useState(isUnifiedEditorEnabled());
 
+  // Proxy auth state
+  const [proxyAuth, setProxyAuth] = useState<ProxyAuthStatus | null>(null);
+  const [deviceKeyInput, setDeviceKeyInput] = useState('');
+  const [deviceKeyValidating, setDeviceKeyValidating] = useState(false);
+  const [deviceKeyError, setDeviceKeyError] = useState<string | null>(null);
+
   // Load settings on mount
   useEffect(() => {
     const unsubscribe = bridge.onMessage((message) => {
@@ -49,6 +87,61 @@ export function Settings({ onClose }: SettingsProps) {
 
     return unsubscribe;
   }, []);
+
+  // Load proxy auth status on mount, then refresh from server
+  useEffect(() => {
+    // First, load cached state immediately (no network call)
+    bridge.sendAsync<ProxyAuthStatus>('loadProxyAuth')
+      .then(setProxyAuth)
+      .catch((err) => console.error('Failed to load proxy auth:', err));
+
+    // Then refresh from server to get fresh usage data
+    bridge.sendAsync<ProxyAuthStatus>('refreshProxyAuth')
+      .then(setProxyAuth)
+      .catch((err) => console.error('Failed to refresh proxy auth:', err));
+  }, []);
+
+  // Validate device key
+  const handleValidateDeviceKey = async () => {
+    if (!deviceKeyInput.trim()) return;
+
+    setDeviceKeyValidating(true);
+    setDeviceKeyError(null);
+
+    try {
+      const result = await bridge.sendAsync<{
+        success: boolean;
+        state: ProxyAuthState;
+        supportId: string;
+        limits: Limits | null;
+        usage: Usage | null;
+      }>('setProxyDeviceKey', {
+        key: deviceKeyInput.trim(),
+      });
+      setProxyAuth({
+        state: result.state,
+        supportId: result.supportId,
+        deviceId: proxyAuth?.deviceId ?? '',
+        limits: result.limits,
+        usage: result.usage,
+      });
+      setDeviceKeyInput('');
+    } catch (err) {
+      setDeviceKeyError(err instanceof Error ? err.message : 'Validation failed');
+    } finally {
+      setDeviceKeyValidating(false);
+    }
+  };
+
+  // Clear device key
+  const handleClearDeviceKey = async () => {
+    try {
+      const result = await bridge.sendAsync<{ success: boolean; state: ProxyAuthState }>('clearProxyDeviceKey');
+      setProxyAuth((prev) => (prev ? { ...prev, state: result.state, supportId: null, limits: null, usage: null } : null));
+    } catch (err) {
+      console.error('Failed to clear device key:', err);
+    }
+  };
 
   const handleSaveOpenAI = () => {
     bridge.send({
@@ -124,6 +217,85 @@ export function Settings({ onClose }: SettingsProps) {
       </header>
 
       <div className="settings-content">
+        <section className="settings-section">
+          <h2>Device Key</h2>
+          <div className="settings-field">
+            {proxyAuth?.state === 'active' || proxyAuth?.state === 'degradedOffline' ? (
+              <div className="settings-device-key-status">
+                <div className="settings-device-key-connected">
+                  <span className="settings-device-key-badge">
+                    {proxyAuth.state === 'degradedOffline' ? 'Offline' : 'Connected'}
+                  </span>
+                  <span className="settings-device-key-support-id">
+                    Support ID: <code>{proxyAuth.supportId}</code>
+                  </span>
+                </div>
+                <button
+                  className="settings-disconnect-btn"
+                  onClick={handleClearDeviceKey}
+                  type="button"
+                >
+                  Disconnect
+                </button>
+                <p className="settings-hint">
+                  {proxyAuth.state === 'degradedOffline'
+                    ? 'Unable to reach server. Using cached credentials.'
+                    : 'Your device is registered with Ticker. AI features are enabled.'}
+                </p>
+              </div>
+            ) : proxyAuth?.state === 'validating' ? (
+              <div className="settings-device-key-entry">
+                <p className="settings-hint" style={{ marginTop: 0 }}>
+                  Validating device key...
+                </p>
+                <div className="loading-spinner" />
+              </div>
+            ) : (
+              <div className="settings-device-key-entry">
+                <p className="settings-hint" style={{ marginTop: 0 }}>
+                  Enter your device key to enable AI features.
+                </p>
+                <div className="settings-key-input">
+                  <input
+                    type="password"
+                    value={deviceKeyInput}
+                    onChange={(e) => setDeviceKeyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && deviceKeyInput.trim()) {
+                        handleValidateDeviceKey();
+                      }
+                    }}
+                    placeholder="tk_live_..."
+                    disabled={deviceKeyValidating}
+                    autoComplete="off"
+                  />
+                  <button
+                    className="settings-save-key"
+                    onClick={handleValidateDeviceKey}
+                    disabled={deviceKeyValidating || !deviceKeyInput.trim()}
+                  >
+                    {deviceKeyValidating ? 'Validating...' : 'Validate'}
+                  </button>
+                </div>
+                {deviceKeyError && (
+                  <p className="settings-error">{deviceKeyError}</p>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Usage section - only visible when connected */}
+        {(proxyAuth?.state === 'active' || proxyAuth?.state === 'degradedOffline') &&
+          proxyAuth.limits && proxyAuth.usage && (
+          <section className="settings-section">
+            <h2>Usage</h2>
+            <div className="settings-field">
+              <UsageDisplay limits={proxyAuth.limits} usage={proxyAuth.usage} />
+            </div>
+          </section>
+        )}
+
         <section className="settings-section">
           <h2>Editor</h2>
           <div className="settings-field">
@@ -449,6 +621,135 @@ export function Settings({ onClose }: SettingsProps) {
             Think <em>through</em> documents, not just <em>about</em> them.
           </p>
         </section>
+      </div>
+    </div>
+  );
+}
+
+// Usage display component
+interface UsageDisplayProps {
+  limits: Limits;
+  usage: Usage;
+}
+
+function UsageDisplay({ limits, usage }: UsageDisplayProps) {
+  const formatNumber = (n: number): string => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+    return n.toString();
+  };
+
+  // Format reset time from server-provided ISO timestamp, or calculate fallback
+  const formatResetTime = (resetAt: string | null, type: 'daily' | 'monthly'): string => {
+    const now = new Date();
+
+    // Use server-provided timestamp if available
+    if (resetAt) {
+      const resetDate = new Date(resetAt);
+      const diffMs = resetDate.getTime() - now.getTime();
+
+      if (diffMs <= 0) {
+        return 'Resets soon';
+      }
+
+      const diffMins = Math.floor(diffMs / (1000 * 60));
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffDays > 1) {
+        return `Resets in ${diffDays} days`;
+      } else if (diffDays === 1) {
+        return 'Resets tomorrow';
+      } else if (diffHours > 0) {
+        return `Resets in ${diffHours}h ${diffMins % 60}m`;
+      }
+      return `Resets in ${diffMins}m`;
+    }
+
+    // Fallback: calculate based on UTC if server timestamp not available
+    if (type === 'daily') {
+      const tomorrow = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate() + 1,
+        0, 0, 0
+      ));
+      const diffMs = tomorrow.getTime() - now.getTime();
+      const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+      const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+
+      if (diffHours > 0) {
+        return `Resets in ${diffHours}h ${diffMins}m`;
+      }
+      return `Resets in ${diffMins}m`;
+    } else {
+      const nextMonth = new Date(Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth() + 1,
+        1, 0, 0, 0
+      ));
+      const diffMs = nextMonth.getTime() - now.getTime();
+      const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffDays > 1) {
+        return `Resets in ${diffDays} days`;
+      } else if (diffDays === 1) {
+        return 'Resets tomorrow';
+      }
+      return 'Resets soon';
+    }
+  };
+
+  const dailyUsed = usage.tokensToday ?? 0;
+  const dailyLimit = limits.tokensPerDay ?? 100000;
+  const dailyPercent = dailyLimit > 0 ? Math.min((dailyUsed / dailyLimit) * 100, 100) : 0;
+  const dailyExceeded = dailyUsed >= dailyLimit;
+  const dailyWarning = dailyPercent >= 80 && !dailyExceeded;
+
+  const monthlyUsed = usage.tokensThisMonth ?? 0;
+  const monthlyLimit = limits.tokensPerMonth ?? 1000000;
+  const monthlyPercent = monthlyLimit > 0 ? Math.min((monthlyUsed / monthlyLimit) * 100, 100) : 0;
+  const monthlyExceeded = monthlyUsed >= monthlyLimit;
+  const monthlyWarning = monthlyPercent >= 80 && !monthlyExceeded;
+
+  return (
+    <div className="usage-display">
+      <div className="usage-item">
+        <div className="usage-header">
+          <span className="usage-label">Daily Tokens</span>
+          {dailyExceeded && <span className="usage-badge usage-badge--error">LIMIT</span>}
+          {dailyWarning && <span className="usage-badge usage-badge--warning">80%+</span>}
+        </div>
+        <div className={`usage-bar ${dailyExceeded ? 'usage-bar--error' : dailyWarning ? 'usage-bar--warning' : ''}`}>
+          <div className="usage-bar-fill" style={{ width: `${dailyPercent}%` }} />
+        </div>
+        <div className="usage-meta">
+          <span className="usage-count">{formatNumber(dailyUsed)} / {formatNumber(dailyLimit)}</span>
+          <span className="usage-reset">
+            {dailyExceeded
+              ? `Daily limit reached. ${formatResetTime(usage.dayResetAt, 'daily')}`
+              : formatResetTime(usage.dayResetAt, 'daily')}
+          </span>
+        </div>
+      </div>
+
+      <div className="usage-item">
+        <div className="usage-header">
+          <span className="usage-label">Monthly Tokens</span>
+          {monthlyExceeded && <span className="usage-badge usage-badge--error">LIMIT</span>}
+          {monthlyWarning && <span className="usage-badge usage-badge--warning">80%+</span>}
+        </div>
+        <div className={`usage-bar ${monthlyExceeded ? 'usage-bar--error' : monthlyWarning ? 'usage-bar--warning' : ''}`}>
+          <div className="usage-bar-fill" style={{ width: `${monthlyPercent}%` }} />
+        </div>
+        <div className="usage-meta">
+          <span className="usage-count">{formatNumber(monthlyUsed)} / {formatNumber(monthlyLimit)}</span>
+          <span className="usage-reset">
+            {monthlyExceeded
+              ? `Monthly limit reached. ${formatResetTime(usage.monthResetAt, 'monthly')}`
+              : formatResetTime(usage.monthResetAt, 'monthly')}
+          </span>
+        </div>
       </div>
     </div>
   );
