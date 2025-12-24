@@ -960,9 +960,71 @@ final class WebViewManager: NSObject {
                 onError: onError
             )
 
-        case "exportMarkdown":
-            // TODO: Export stream
-            break
+        case "exportStream":
+            guard let payload = message.payload,
+                  let streamIdString = payload["streamId"]?.value as? String,
+                  let streamId = UUID(uuidString: streamIdString),
+                  let format = payload["format"]?.value as? String else {
+                print("Invalid exportStream payload")
+                return
+            }
+
+            do {
+                guard let stream = try persistence.loadStream(id: streamId) else {
+                    print("Stream not found for export: \(streamId)")
+                    bridgeService.send(BridgeMessage(type: "exportError", payload: [
+                        "streamId": AnyCodable(streamIdString),
+                        "error": AnyCodable("Stream not found")
+                    ]))
+                    return
+                }
+
+                // Convert to export format
+                let content = formatStreamForExport(stream: stream, format: format)
+                let fileExtension = format == "markdown" ? ".md" : ".txt"
+                let suggestedName = sanitizeFilename(stream.title) + fileExtension
+
+                // Show save panel on main thread
+                await MainActor.run {
+                    let savePanel = NSSavePanel()
+                    savePanel.nameFieldStringValue = suggestedName
+                    // Use appropriate content type for the format
+                    if format == "markdown" {
+                        savePanel.allowedContentTypes = [.init(filenameExtension: "md") ?? .plainText]
+                    } else {
+                        savePanel.allowedContentTypes = [.plainText]
+                    }
+                    savePanel.message = "Export stream as \(format == "markdown" ? "Markdown" : "Plain Text")"
+
+                    let result = savePanel.runModal()
+                    if result == .OK, let url = savePanel.url {
+                        do {
+                            try content.write(to: url, atomically: true, encoding: .utf8)
+                            bridgeService.send(BridgeMessage(type: "exportComplete", payload: [
+                                "streamId": AnyCodable(streamId.uuidString),
+                                "path": AnyCodable(url.path)
+                            ]))
+                        } catch {
+                            print("Failed to write export file: \(error)")
+                            bridgeService.send(BridgeMessage(type: "exportError", payload: [
+                                "streamId": AnyCodable(streamId.uuidString),
+                                "error": AnyCodable(error.localizedDescription)
+                            ]))
+                        }
+                    } else {
+                        // User canceled - no error, just inform frontend
+                        bridgeService.send(BridgeMessage(type: "exportCanceled", payload: [
+                            "streamId": AnyCodable(streamId.uuidString)
+                        ]))
+                    }
+                }
+            } catch {
+                print("Failed to load stream for export: \(error)")
+                bridgeService.send(BridgeMessage(type: "exportError", payload: [
+                    "streamId": AnyCodable(streamIdString),
+                    "error": AnyCodable(error.localizedDescription)
+                ]))
+            }
 
         case "loadSettings":
             let settings = settingsWithClassifierState()
@@ -1488,6 +1550,112 @@ final class WebViewManager: NSObject {
             settings["classifierLoading"] = true
         }
         return settings
+    }
+
+    // MARK: - Export Helpers
+
+    /// Format a stream for export as markdown or plain text
+    private func formatStreamForExport(stream: Stream, format: String) -> String {
+        var output = ""
+        let isMarkdown = format == "markdown"
+
+        // Title
+        if isMarkdown {
+            output += "# \(stream.title)\n\n"
+        } else {
+            output += "\(stream.title)\n\n"
+        }
+
+        // Cells
+        let sortedCells = stream.cells.sorted(by: { $0.order < $1.order })
+        for cell in sortedCells {
+            let plainContent = stripHTML(cell.content)
+
+            switch cell.type {
+            case .text:
+                output += plainContent + "\n\n"
+
+            case .aiResponse:
+                if isMarkdown {
+                    output += "**AI Response**"
+                    if let modelId = cell.modelId {
+                        output += " *(\(modelId))*"
+                    }
+                    output += "\n"
+                    if let prompt = cell.originalPrompt {
+                        // Format multi-line prompts as proper blockquotes
+                        let quotedPrompt = prompt.components(separatedBy: "\n")
+                            .map { "> \($0)" }
+                            .joined(separator: "\n")
+                        output += "\(quotedPrompt)\n\n"
+                    }
+                } else {
+                    output += "[AI Response"
+                    if let modelId = cell.modelId { output += " - \(modelId)" }
+                    output += "]\n"
+                    if let prompt = cell.originalPrompt {
+                        output += "Prompt: \(prompt)\n\n"
+                    }
+                }
+                output += plainContent + "\n\n"
+
+            case .quote:
+                if isMarkdown {
+                    output += "**Quote**"
+                    if let sourceApp = cell.sourceApp {
+                        output += " *(from \(sourceApp))*"
+                    }
+                    output += "\n\n"
+                } else {
+                    output += "[Quote"
+                    if let sourceApp = cell.sourceApp { output += " - \(sourceApp)" }
+                    output += "]\n"
+                }
+                output += plainContent + "\n\n"
+            }
+
+            output += isMarkdown ? "---\n\n" : "---\n\n"
+        }
+
+        // Sources
+        if !stream.sources.isEmpty {
+            output += isMarkdown ? "## Sources\n\n" : "Sources:\n"
+            for source in stream.sources {
+                output += "- \(source.displayName)\n"
+            }
+        }
+
+        return output
+    }
+
+    /// Strip HTML tags from content and convert to plain text
+    private func stripHTML(_ html: String) -> String {
+        guard let data = html.data(using: .utf8),
+              let attributedString = try? NSAttributedString(
+                  data: data,
+                  options: [
+                      .documentType: NSAttributedString.DocumentType.html,
+                      .characterEncoding: String.Encoding.utf8.rawValue
+                  ],
+                  documentAttributes: nil
+              ) else {
+            // Fallback: basic regex-based stripping
+            return html
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "&nbsp;", with: " ")
+                .replacingOccurrences(of: "&amp;", with: "&")
+                .replacingOccurrences(of: "&lt;", with: "<")
+                .replacingOccurrences(of: "&gt;", with: ">")
+                .replacingOccurrences(of: "&quot;", with: "\"")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return attributedString.string.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Sanitize a string for use as a filename
+    private func sanitizeFilename(_ name: String) -> String {
+        let invalidChars = CharacterSet(charactersIn: ":/\\?%*|\"<>")
+        return name.components(separatedBy: invalidChars).joined(separator: "-")
     }
 
     private func decodeCell(from payload: [String: AnyCodable]) throws -> Cell {

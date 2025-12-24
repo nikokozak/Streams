@@ -461,6 +461,20 @@ export function useBridgeMessages({ streamId, initialSources, editorAPI }: UseBr
         store.setError(cellId, displayError);
         store.completeRefreshing(cellId);
       }
+
+      // Export events
+      if (message.type === 'exportComplete' && message.payload?.path) {
+        const path = message.payload.path as string;
+        const filename = path.split('/').pop() || 'file';
+        toastStore.addToast(`Exported to ${filename}`, 'info');
+      }
+
+      if (message.type === 'exportError' && message.payload?.error) {
+        const error = formatError(message.payload.error, 'Export failed.');
+        toastStore.addToast(`Export failed: ${error}`, 'error');
+      }
+
+      // exportCanceled is silent (user intentionally canceled)
       } catch (err) {
         console.error('[useBridgeMessages] Error handling message:', message.type, err);
       }
