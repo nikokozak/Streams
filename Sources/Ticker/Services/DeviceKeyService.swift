@@ -427,16 +427,38 @@ actor DeviceKeyService {
         return (data.deviceId, key)
     }
 
-    /// Get required headers for proxy requests
+    /// Get functional headers for proxy requests (auth + device ID only)
+    /// Use applyDiagnosticsHeaders() separately to add conditional diagnostic headers
     func getProxyHeaders() -> [String: String]? {
         guard let credentials = getCredentials() else { return nil }
+
+        // Functional headers only (required for auth)
         return [
             "Authorization": "Bearer \(credentials.deviceKey)",
-            "X-Ticker-Device-Id": credentials.deviceId,
-            "X-Ticker-App-Version": appVersion(),
-            "X-Ticker-Platform": "macOS",
-            "X-Ticker-OS-Version": osVersion()
+            "X-Ticker-Device-Id": credentials.deviceId
         ]
+    }
+
+    /// Apply diagnostic headers to a URLRequest (only if diagnostics enabled)
+    /// Call this after setting functional headers to conditionally add:
+    /// - X-Ticker-App-Version
+    /// - X-Ticker-Platform
+    /// - X-Ticker-OS-Version
+    /// - X-Ticker-Request-Id
+    /// Returns the generated request ID if sent, nil otherwise
+    @discardableResult
+    func applyDiagnosticsHeaders(to request: inout URLRequest) -> String? {
+        guard SettingsService.shared.diagnosticsEnabled else {
+            return nil
+        }
+
+        let requestId = UUID().uuidString
+        request.setValue(appVersion(), forHTTPHeaderField: "X-Ticker-App-Version")
+        request.setValue("macOS", forHTTPHeaderField: "X-Ticker-Platform")
+        request.setValue(osVersion(), forHTTPHeaderField: "X-Ticker-OS-Version")
+        request.setValue(requestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+
+        return requestId
     }
 
     // MARK: - Request ID Tracking (D4)
@@ -469,6 +491,7 @@ actor DeviceKeyService {
             "device_id": data.deviceId,
             "support_id": data.supportId ?? "none",
             "auth_state": currentState.rawValue,
+            "diagnostics_enabled": SettingsService.shared.diagnosticsEnabled,
             "recent_request_ids": recentRequestIds.map { entry in
                 [
                     "request_id": entry.requestId,
@@ -582,8 +605,8 @@ actor DeviceKeyService {
         request.httpBody = bodyData
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let localRequestId = UUID().uuidString
-        request.setValue(localRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+        // Diagnostic headers (conditional)
+        let localRequestId = applyDiagnosticsHeaders(to: &request)
 
         let responseData: Data
         let response: URLResponse
@@ -597,9 +620,10 @@ actor DeviceKeyService {
             throw DeviceKeyError.invalidResponse
         }
 
-        // Record response request ID (prefer server's, fall back to local)
-        let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localRequestId
-        recordRequestId(responseRequestId, endpoint: "feedback")
+        // Record request ID if available (prefer server's response header)
+        if let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localRequestId {
+            recordRequestId(responseRequestId, endpoint: "feedback")
+        }
 
         switch httpResponse.statusCode {
         case 200:
@@ -658,8 +682,8 @@ actor DeviceKeyService {
         createRequest.httpBody = createBodyData
         createRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let localCreateRequestId = UUID().uuidString
-        createRequest.setValue(localCreateRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+        // Diagnostic headers (conditional)
+        let localCreateRequestId = applyDiagnosticsHeaders(to: &createRequest)
 
         let (createResponseData, createResponse) = try await URLSession.shared.data(for: createRequest)
 
@@ -667,9 +691,10 @@ actor DeviceKeyService {
             throw DeviceKeyError.invalidResponse
         }
 
-        // Record response request ID (prefer server's)
-        let createResponseRequestId = createHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCreateRequestId
-        recordRequestId(createResponseRequestId, endpoint: "feedback-attachment")
+        // Record request ID if available (prefer server's response header)
+        if let createResponseRequestId = createHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCreateRequestId {
+            recordRequestId(createResponseRequestId, endpoint: "feedback-attachment")
+        }
 
         // Handle error codes
         switch createHttpResponse.statusCode {
@@ -726,8 +751,8 @@ actor DeviceKeyService {
         completeRequest.httpBody = completeBodyData
         completeRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let localCompleteRequestId = UUID().uuidString
-        completeRequest.setValue(localCompleteRequestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+        // Diagnostic headers (conditional)
+        let localCompleteRequestId = applyDiagnosticsHeaders(to: &completeRequest)
 
         let (_, completeResponse) = try await URLSession.shared.data(for: completeRequest)
 
@@ -735,9 +760,10 @@ actor DeviceKeyService {
             throw DeviceKeyError.invalidResponse
         }
 
-        // Record response request ID (prefer server's)
-        let completeResponseRequestId = completeHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCompleteRequestId
-        recordRequestId(completeResponseRequestId, endpoint: "feedback-attachment-complete")
+        // Record request ID if available (prefer server's response header)
+        if let completeResponseRequestId = completeHttpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? localCompleteRequestId {
+            recordRequestId(completeResponseRequestId, endpoint: "feedback-attachment-complete")
+        }
 
         // Handle error codes
         switch completeHttpResponse.statusCode {
@@ -822,13 +848,12 @@ actor DeviceKeyService {
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        // Functional headers (always sent)
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue(data.deviceId, forHTTPHeaderField: "X-Ticker-Device-Id")
-        request.setValue(appVersion(), forHTTPHeaderField: "X-Ticker-App-Version")
-        request.setValue("macOS", forHTTPHeaderField: "X-Ticker-Platform")
-        request.setValue(osVersion(), forHTTPHeaderField: "X-Ticker-OS-Version")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(UUID().uuidString, forHTTPHeaderField: "X-Ticker-Request-Id")
+        // Diagnostic headers (conditional)
+        applyDiagnosticsHeaders(to: &request)
 
         let responseData: Data
         let response: URLResponse

@@ -79,14 +79,13 @@ final class ProxyLLMService: LLMProvider {
         urlRequest.httpBody = bodyData
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        // Add device key headers
+        // Add functional headers (auth + device ID)
         for (key, value) in headers {
             urlRequest.setValue(value, forHTTPHeaderField: key)
         }
 
-        // Add request ID for correlation
-        let requestId = UUID().uuidString
-        urlRequest.setValue(requestId, forHTTPHeaderField: "X-Ticker-Request-Id")
+        // Add diagnostic headers (conditional on user preference)
+        let requestId = await deviceKeyService.applyDiagnosticsHeaders(to: &urlRequest)
 
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
@@ -98,11 +97,13 @@ final class ProxyLLMService: LLMProvider {
                 return
             }
 
-            // Extract request ID from response (proxy may override)
+            // Get response request ID (prefer server's, fall back to what we sent)
             let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId
 
-            // Record request ID for support bundle (D4)
-            await deviceKeyService.recordRequestId(responseRequestId, endpoint: "llm")
+            // Record request ID if available (for support bundle)
+            if let id = responseRequestId {
+                await deviceKeyService.recordRequestId(id, endpoint: "llm")
+            }
 
             // Handle non-200 responses
             if httpResponse.statusCode != 200 {
@@ -117,7 +118,7 @@ final class ProxyLLMService: LLMProvider {
                 let error = await parseErrorResponse(
                     bytes: bytes,
                     statusCode: httpResponse.statusCode,
-                    requestId: responseRequestId,
+                    requestId: responseRequestId ?? "unknown",
                     retryAfterHeader: retryAfterHeader
                 )
 
@@ -148,7 +149,7 @@ final class ProxyLLMService: LLMProvider {
                         await handleSSEEvent(
                             eventType: eventType,
                             dataLine: dataLine,
-                            requestId: responseRequestId,
+                            requestId: responseRequestId ?? "unknown",
                             onChunk: onChunk,
                             onComplete: onComplete,
                             onError: onError

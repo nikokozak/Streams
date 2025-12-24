@@ -18,6 +18,7 @@ interface SettingsData {
   classifierLoading?: boolean;
   classifierError?: string;
   appearance: Appearance;
+  diagnosticsEnabled: boolean;
 }
 
 // Proxy auth state (matches Swift ProxyAuthState enum)
@@ -420,6 +421,31 @@ export function Settings({ onClose }: SettingsProps) {
             </div>
           </section>
         )}
+
+        {/* Privacy section (D6) */}
+        <section className="settings-section">
+          <h2>Privacy</h2>
+          <div className="settings-field">
+            <label className="settings-toggle-label">
+              <input
+                type="checkbox"
+                checked={settings?.diagnosticsEnabled ?? true}
+                onChange={(e) => {
+                  bridge.send({
+                    type: 'saveSettings',
+                    payload: { diagnosticsEnabled: e.target.checked },
+                  });
+                }}
+              />
+              <span>Send diagnostics</span>
+            </label>
+            <p className="settings-hint">
+              When enabled, Ticker sends request IDs and app/OS version with each
+              request to help troubleshoot issues. No note content or prompts are
+              collected.
+            </p>
+          </div>
+        </section>
 
         {/* Testing section - only visible when connected (D5) */}
         {(proxyAuth?.state === 'active' || proxyAuth?.state === 'degradedOffline') && (
