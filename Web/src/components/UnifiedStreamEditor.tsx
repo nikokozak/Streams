@@ -230,6 +230,7 @@ export function UnifiedStreamEditor({
   const [title, setTitle] = useState(stream.title);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
   const titleInputRef = useRef<HTMLInputElement>(null);
 
   // Track if we've initialized the store for this stream
@@ -273,6 +274,7 @@ export function UnifiedStreamEditor({
     setTitle(stream.title);
     setIsEditingTitle(false);
     setShowDeleteConfirm(false);
+    setShowExportMenu(false);
   }, [stream.id, stream.title]);
 
   // Title editing handlers (same behavior as StreamEditor)
@@ -300,6 +302,12 @@ export function UnifiedStreamEditor({
       setIsEditingTitle(false);
     }
   }, [saveTitle, stream.title]);
+
+  // Export stream to file (fire-and-forget; NSSavePanel is modal)
+  const handleExport = useCallback((format: 'markdown' | 'text') => {
+    bridge.send({ type: 'exportStream', payload: { streamId: stream.id, format } });
+    setShowExportMenu(false);
+  }, [stream.id]);
 
   /**
    * Save pending edited cells (debounced).
@@ -1077,6 +1085,34 @@ export function UnifiedStreamEditor({
           </h1>
         )}
         <span className="stream-hint">Unified editor (auto-saves)</span>
+        <div className="export-menu-container">
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="export-stream-button"
+            title="Export stream"
+            type="button"
+          >
+            Export
+          </button>
+          {showExportMenu && (
+            <div className="export-menu-dropdown">
+              <button
+                onClick={() => handleExport('markdown')}
+                className="export-menu-item"
+                type="button"
+              >
+                Text (.md)
+              </button>
+              <button
+                onClick={() => handleExport('text')}
+                className="export-menu-item"
+                type="button"
+              >
+                Text (.txt)
+              </button>
+            </div>
+          )}
+        </div>
         <button
           onClick={() => setShowDeleteConfirm(true)}
           className="delete-stream-button"
