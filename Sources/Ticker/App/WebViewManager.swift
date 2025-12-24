@@ -766,15 +766,6 @@ final class WebViewManager: NSObject {
                 }
             }
 
-            // Check if configured
-            guard aiService.isConfigured else {
-                bridgeService.send(BridgeMessage(
-                    type: "aiError",
-                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured. Go to Settings to add your key.")]
-                ))
-                return
-            }
-
             // Define callbacks for streaming
             let onChunk: (String) -> Void = { [weak self] chunk in
                 self?.bridgeService.send(BridgeMessage(
@@ -789,15 +780,56 @@ final class WebViewManager: NSObject {
                 ))
             }
             let onError: (Error) -> Void = { [weak self] error in
+                var payload: [String: AnyCodable] = [
+                    "cellId": AnyCodable(cellId),
+                    "error": AnyCodable(error.localizedDescription)
+                ]
+
+                // Add proxy-specific error details
+                if let proxyError = error as? ProxyLLMError {
+                    payload["errorCode"] = AnyCodable(proxyError.errorCode)
+                    if let requestId = proxyError.requestId {
+                        payload["requestId"] = AnyCodable(requestId)
+                    }
+
+                    // Add quota details for quota exceeded errors
+                    if case .quotaExceeded(let details) = proxyError {
+                        payload["quotaScope"] = AnyCodable(details.scope)
+                        payload["quotaLimit"] = AnyCodable(details.limit)
+                        payload["quotaUsed"] = AnyCodable(details.used)
+                        payload["quotaResetAt"] = AnyCodable(details.resetAt)
+                    }
+
+                    // Add retry timing for rate limit errors
+                    if case .rateLimited(let retryAfter) = proxyError {
+                        if let seconds = retryAfter {
+                            payload["retryAfter"] = AnyCodable(seconds)
+                        }
+                    }
+                }
+
                 self?.bridgeService.send(BridgeMessage(
                     type: "aiError",
-                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable(error.localizedDescription)]
+                    payload: payload
                 ))
             }
 
             // Route through orchestrator (handles smart routing and RAG retrieval internally)
             Task { [weak self] in
-                await orchestrator.route(
+                guard let self else { return }
+
+                // Check if any AI is available (proxy mode or vendor keys)
+                let proxyUsable = await DeviceKeyService.shared.currentState.isUsable
+                let hasVendorKey = self.aiService.isConfigured || self.anthropicService.isConfigured
+
+                guard proxyUsable || hasVendorKey else {
+                    await MainActor.run {
+                        onError(OrchestratorError.noProviderAvailable)
+                    }
+                    return
+                }
+
+                await self.orchestrator.route(
                     query: resolvedCurrentCell,
                     queryImages: allImageDataURLs,
                     streamId: streamIdForRAG,
@@ -806,7 +838,7 @@ final class WebViewManager: NSObject {
                     onChunk: onChunk,
                     onComplete: onComplete,
                     onError: onError,
-                    onModelSelected: { modelId in
+                    onModelSelected: { [weak self] modelId in
                         // Notify frontend which model is being used
                         self?.bridgeService.send(BridgeMessage(
                             type: "modelSelected",
