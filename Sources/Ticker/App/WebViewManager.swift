@@ -115,6 +115,19 @@ final class WebViewManager: NSObject {
         webView.onFilesDropped = { [weak self] urls in
             self?.handleDroppedFiles(urls)
         }
+
+        // Initialize DeviceKeyService and wire up state change callback
+        Task {
+            await DeviceKeyService.shared.onStateChange = { [weak self] state in
+                // Push state to Web
+                self?.bridgeService.send(BridgeMessage(
+                    type: "proxyAuthState",
+                    payload: ["state": AnyCodable(state.rawValue)]
+                ))
+            }
+            // Initialize and validate cached key
+            await DeviceKeyService.shared.initialize()
+        }
     }
 
     /// Handle files dropped via native macOS drag-and-drop
@@ -972,6 +985,148 @@ final class WebViewManager: NSObject {
                 type: "settingsLoaded",
                 payload: ["settings": AnyCodable(settings)]
             ))
+
+        // MARK: - Proxy Auth (canonical names per docs)
+
+        case "loadProxyAuth":
+            // Pure read of cached state - no network call
+            guard let callbackId = message.callbackId else {
+                print("Invalid loadProxyAuth payload")
+                return
+            }
+            Task {
+                let auth = await DeviceKeyService.shared.loadProxyAuth()
+                let (limits, usage) = await DeviceKeyService.shared.getLimitsAndUsage()
+
+                await MainActor.run {
+                    var response: [String: AnyCodable] = [
+                        "state": AnyCodable(auth.state.rawValue),
+                        "supportId": AnyCodable(auth.supportId as Any),
+                        "deviceId": AnyCodable(auth.deviceId)
+                    ]
+
+                    // Include limits if available
+                    if let limits = limits {
+                        response["limits"] = AnyCodable([
+                            "reqsPerMin": limits.reqsPerMin as Any,
+                            "tokensPerDay": limits.tokensPerDay as Any,
+                            "tokensPerMonth": limits.tokensPerMonth as Any
+                        ])
+                    }
+
+                    // Include usage if available
+                    if let usage = usage {
+                        response["usage"] = AnyCodable([
+                            "reqsThisMinute": usage.reqsThisMinute as Any,
+                            "tokensToday": usage.tokensToday as Any,
+                            "tokensThisMonth": usage.tokensThisMonth as Any,
+                            "dayResetAt": usage.dayResetAt as Any,
+                            "monthResetAt": usage.monthResetAt as Any
+                        ])
+                    }
+
+                    bridgeService.respond(to: callbackId, with: response)
+                }
+            }
+
+        case "setProxyDeviceKey":
+            guard let payload = message.payload,
+                  let key = payload["key"]?.value as? String,
+                  let callbackId = message.callbackId else {
+                print("Invalid setProxyDeviceKey payload")
+                return
+            }
+            Task {
+                do {
+                    let result = try await DeviceKeyService.shared.setProxyDeviceKey(key)
+                    let newAuth = await DeviceKeyService.shared.loadProxyAuth()
+                    await MainActor.run {
+                        bridgeService.respond(to: callbackId, with: [
+                            "success": AnyCodable(true),
+                            "state": AnyCodable(newAuth.state.rawValue),
+                            "supportId": AnyCodable(result.supportId),
+                            "limits": AnyCodable([
+                                "reqsPerMin": result.limits?.reqsPerMin as Any,
+                                "tokensPerDay": result.limits?.tokensPerDay as Any,
+                                "tokensPerMonth": result.limits?.tokensPerMonth as Any
+                            ]),
+                            "usage": AnyCodable([
+                                "reqsThisMinute": result.usage?.reqsThisMinute as Any,
+                                "tokensToday": result.usage?.tokensToday as Any,
+                                "tokensThisMonth": result.usage?.tokensThisMonth as Any,
+                                "dayResetAt": result.usage?.dayResetAt as Any,
+                                "monthResetAt": result.usage?.monthResetAt as Any
+                            ])
+                        ])
+                    }
+                } catch {
+                    let newAuth = await DeviceKeyService.shared.loadProxyAuth()
+                    await MainActor.run {
+                        bridgeService.respondWithError(to: callbackId, error: error.localizedDescription)
+                        // Also push state change
+                        bridgeService.send(BridgeMessage(
+                            type: "proxyAuthState",
+                            payload: ["state": AnyCodable(newAuth.state.rawValue)]
+                        ))
+                    }
+                }
+            }
+
+        case "clearProxyDeviceKey":
+            guard let callbackId = message.callbackId else {
+                print("Invalid clearProxyDeviceKey payload")
+                return
+            }
+            Task {
+                await DeviceKeyService.shared.clearProxyDeviceKey()
+                let newAuth = await DeviceKeyService.shared.loadProxyAuth()
+                await MainActor.run {
+                    bridgeService.respond(to: callbackId, with: [
+                        "success": AnyCodable(true),
+                        "state": AnyCodable(newAuth.state.rawValue)
+                    ])
+                }
+            }
+
+        case "validateProxyDeviceKey", "refreshProxyAuth":
+            // Re-validate cached key with server and return fresh limits/usage
+            guard let callbackId = message.callbackId else {
+                print("Invalid validateProxyDeviceKey/refreshProxyAuth payload")
+                return
+            }
+            Task {
+                await DeviceKeyService.shared.revalidate()
+                let newAuth = await DeviceKeyService.shared.loadProxyAuth()
+                let (limits, usage) = await DeviceKeyService.shared.getLimitsAndUsage()
+
+                await MainActor.run {
+                    var response: [String: AnyCodable] = [
+                        "state": AnyCodable(newAuth.state.rawValue),
+                        "supportId": AnyCodable(newAuth.supportId as Any),
+                        "deviceId": AnyCodable(newAuth.deviceId)
+                    ]
+
+                    if let limits = limits {
+                        response["limits"] = AnyCodable([
+                            "reqsPerMin": limits.reqsPerMin as Any,
+                            "tokensPerDay": limits.tokensPerDay as Any,
+                            "tokensPerMonth": limits.tokensPerMonth as Any
+                        ])
+                    }
+
+                    if let usage = usage {
+                        response["usage"] = AnyCodable([
+                            "reqsThisMinute": usage.reqsThisMinute as Any,
+                            "tokensToday": usage.tokensToday as Any,
+                            "tokensThisMonth": usage.tokensThisMonth as Any,
+                            "dayResetAt": usage.dayResetAt as Any,
+                            "monthResetAt": usage.monthResetAt as Any
+                        ])
+                    }
+
+                    bridgeService.respond(to: callbackId, with: response)
+                }
+            }
 
         case "currentStreamId":
             // Response from frontend with current stream ID for file drops

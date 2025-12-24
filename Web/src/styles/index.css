@@ -1810,6 +1810,202 @@ body {
   line-height: var(--line-height-relaxed);
 }
 
+.settings-error {
+  font-size: var(--font-size-sm);
+  color: var(--color-error);
+  margin: var(--spacing-xs) 0 0;
+}
+
+/* Device Key Section */
+.settings-device-key-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.settings-device-key-connected {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+.settings-device-key-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: rgba(22, 163, 74, 0.1);
+  color: var(--color-success);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(22, 163, 74, 0.2);
+}
+
+.settings-device-key-support-id {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.settings-device-key-support-id code {
+  font-family: 'SF Mono', monospace;
+  background: var(--color-surface);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+}
+
+.settings-disconnect-btn {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  align-self: flex-start;
+}
+
+.settings-disconnect-btn:hover {
+  border-color: var(--color-error);
+  color: var(--color-error);
+  background: rgba(220, 38, 38, 0.05);
+}
+
+.settings-device-key-entry {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+/* Auth Gate */
+.auth-gate {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: var(--spacing-xl);
+  background: var(--color-background);
+}
+
+.auth-gate-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  max-width: 400px;
+}
+
+.auth-gate-icon {
+  font-size: 48px;
+  margin-bottom: var(--spacing-md);
+}
+
+.auth-gate-content h1 {
+  font-size: var(--font-size-xl);
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 var(--spacing-sm);
+}
+
+.auth-gate-content p {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--spacing-lg);
+  line-height: var(--line-height-relaxed);
+}
+
+.auth-gate-content .loading-spinner {
+  margin-bottom: var(--spacing-md);
+}
+
+.auth-gate-content .primary-button {
+  min-width: 180px;
+}
+
+/* Usage Display */
+.usage-display {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+}
+
+.usage-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+}
+
+.usage-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.usage-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.usage-badge {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.usage-badge--warning {
+  background: rgba(202, 138, 4, 0.15);
+  color: var(--color-warning);
+}
+
+.usage-badge--error {
+  background: rgba(220, 38, 38, 0.15);
+  color: var(--color-error);
+}
+
+.usage-bar {
+  height: 8px;
+  background: var(--color-surface);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.usage-bar-fill {
+  height: 100%;
+  background: var(--color-accent);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.usage-bar--warning .usage-bar-fill {
+  background: var(--color-warning);
+}
+
+.usage-bar--error .usage-bar-fill {
+  background: var(--color-error);
+}
+
+.usage-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.usage-count {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  font-family: 'SF Mono', monospace;
+}
+
+.usage-reset {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
 .settings-classifier-status {
   font-size: var(--font-size-sm);
   margin: var(--spacing-xs) 0 0;
