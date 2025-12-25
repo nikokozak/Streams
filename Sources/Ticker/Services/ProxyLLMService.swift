@@ -15,6 +15,23 @@ final class ProxyLLMService: LLMProvider {
         self.deviceKeyService = deviceKeyService
     }
 
+    private var proxyDebugEnabled: Bool {
+#if DEBUG
+        // Default to ON in Debug builds so alpha QA always has proxy diagnostics in the terminal.
+        return true
+#else
+        if let raw = ProcessInfo.processInfo.environment["TICKER_PROXY_DEBUG"], !raw.isEmpty {
+            return raw == "1" || raw.lowercased() == "true" || raw.lowercased() == "yes"
+        }
+        return UserDefaults.standard.bool(forKey: "TickerProxyDebug")
+#endif
+    }
+
+    private func debugLog(_ message: String) {
+        guard proxyDebugEnabled else { return }
+        print("[ProxyLLMService] \(message)")
+    }
+
     /// Proxy base URL - matches DeviceKeyService
     private var proxyBaseURL: String {
         if let envURL = ProcessInfo.processInfo.environment["TICKER_PROXY_URL"], !envURL.isEmpty {
@@ -59,10 +76,12 @@ final class ProxyLLMService: LLMProvider {
 
         // Build request body in proxy format
         let messages = buildProxyMessages(from: request)
+        let provider = determineProvider(for: request)
+        let model = determineModel(for: request)
         let requestBody: [String: Any] = [
-            "model": determineModel(for: request),
+            "model": model,
             "messages": messages,
-            "provider": determineProvider(for: request),
+            "provider": provider,
             "stream": true
         ]
 
@@ -77,7 +96,12 @@ final class ProxyLLMService: LLMProvider {
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = bodyData
+        // Avoid hanging indefinitely while still allowing long-running streams.
+        // This acts as an "idle" timeout (no bytes transferred) rather than a strict overall cap.
+        urlRequest.timeoutInterval = 120
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        // Proxy API pipeline expects JSON requests; include JSON in Accept to avoid 406 from `accepts ["json"]`.
+        urlRequest.setValue("text/event-stream, application/json", forHTTPHeaderField: "Accept")
 
         // Add functional headers (auth + device ID)
         for (key, value) in headers {
@@ -86,9 +110,26 @@ final class ProxyLLMService: LLMProvider {
 
         // Add diagnostic headers (conditional on user preference)
         let requestId = await deviceKeyService.applyDiagnosticsHeaders(to: &urlRequest)
+        debugLog("Starting stream request provider=\(provider) model=\(model) hasImages=\(request.hasImages) requestId=\(requestId ?? "nil") url=\(url.absoluteString)")
+        debugLog("Awaiting response headers (idle timeout=\(Int(urlRequest.timeoutInterval))s)")
+
+        var didReceiveHeaders = false
+
+        let headerWatchdog = Task { [weak self] in
+            // Periodic breadcrumbs so we can tell if we're stuck pre-headers.
+            for seconds in [5, 10, 15] {
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(seconds) * 1_000_000_000)
+                } catch {
+                    return
+                }
+                self?.debugLog("Still awaiting response headers after \(seconds)s…")
+            }
+        }
 
         do {
             let (bytes, response) = try await URLSession.shared.bytes(for: urlRequest)
+            headerWatchdog.cancel()
 
             guard let httpResponse = response as? HTTPURLResponse else {
                 await MainActor.run {
@@ -99,6 +140,8 @@ final class ProxyLLMService: LLMProvider {
 
             // Get response request ID (prefer server's, fall back to what we sent)
             let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId
+            debugLog("Response status=\(httpResponse.statusCode) contentType=\(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil") responseRequestId=\(responseRequestId ?? "nil")")
+            didReceiveHeaders = true
 
             // Record request ID if available (for support bundle)
             if let id = responseRequestId {
@@ -134,45 +177,104 @@ final class ProxyLLMService: LLMProvider {
             // Stream SSE events
             // Proxy format: "event: <type>\ndata: <json>\n\n"
             var currentEventType: String?
-            var currentDataLine: String?
+            var dataLines: [String] = []
+            var didReceiveAnyEvent = false
 
-            for try await line in bytes.lines {
-                if line.hasPrefix("event: ") {
-                    // New event type
-                    currentEventType = String(line.dropFirst(7))
-                } else if line.hasPrefix("data: ") {
-                    // Data payload
-                    currentDataLine = String(line.dropFirst(6))
-                } else if line.isEmpty {
-                    // Blank line = dispatch the event
-                    if let eventType = currentEventType, let dataLine = currentDataLine {
-                        await handleSSEEvent(
-                            eventType: eventType,
-                            dataLine: dataLine,
-                            requestId: responseRequestId ?? "unknown",
-                            onChunk: onChunk,
-                            onComplete: onComplete,
-                            onError: onError
-                        )
+            func dispatchEventIfReady() async -> Bool {
+                guard let eventType = currentEventType else {
+                    dataLines.removeAll(keepingCapacity: true)
+                    return false
+                }
 
-                        // Check if we should stop
-                        if eventType == "done" || eventType == "error" {
+                let dataLine = dataLines.joined(separator: "\n")
+                didReceiveAnyEvent = true
+                debugLog("Dispatch event=\(eventType) dataLen=\(dataLine.count)")
+                await handleSSEEvent(
+                    eventType: eventType,
+                    dataLine: dataLine,
+                    requestId: responseRequestId ?? "unknown",
+                    onChunk: onChunk,
+                    onComplete: onComplete,
+                    onError: onError
+                )
+
+                currentEventType = nil
+                dataLines.removeAll(keepingCapacity: true)
+
+                return eventType == "done" || eventType == "error"
+            }
+
+            for try await rawLine in bytes.lines {
+                let line = rawLine.trimmingCharacters(in: CharacterSet(charactersIn: "\r"))
+                if !didReceiveAnyEvent && !line.isEmpty {
+                    // Lightweight signal that the stream is alive.
+                    debugLog("Received SSE line (len=\(line.count))")
+                }
+
+                if line.hasPrefix("event:") {
+                    // If we see a new event type and we already have data for the previous event,
+                    // dispatch the previous event even if the blank-line separator isn't surfaced
+                    // by URLSession's line iterator.
+                    if currentEventType != nil, !dataLines.isEmpty {
+                        if await dispatchEventIfReady() {
                             return
                         }
                     }
-                    currentEventType = nil
-                    currentDataLine = nil
+                    currentEventType = line.dropFirst(6).trimmingCharacters(in: .whitespaces)
+                } else if line.hasPrefix("data:") {
+                    let data = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+                    dataLines.append(data)
+
+                    // Most proxy SSE events are single-line JSON. If the blank line separator
+                    // isn't delivered, dispatch immediately once we have a complete data line.
+                    if let eventType = currentEventType,
+                       dataLines.count == 1,
+                       ["delta", "done", "error"].contains(eventType),
+                       data.hasPrefix("{"),
+                       data.hasSuffix("}") {
+                        if await dispatchEventIfReady() {
+                            return
+                        }
+                    }
+                } else if line.isEmpty {
+                    if await dispatchEventIfReady() {
+                        return
+                    }
+                } else {
+                    continue
                 }
+            }
+
+            if await dispatchEventIfReady() {
+                return
+            }
+
+            if !didReceiveAnyEvent {
+                debugLog("Stream ended without dispatching any SSE events")
+            } else {
+                debugLog("Stream ended without done/error event; completing")
             }
 
             // Stream ended without done event
             await MainActor.run { onComplete() }
 
-        } catch _ as URLError {
-            await MainActor.run {
-                onError(ProxyLLMError.unreachable)
+        } catch let urlError as URLError {
+            headerWatchdog.cancel()
+            if urlError.code == .timedOut {
+                let timeoutSeconds = Int(urlRequest.timeoutInterval)
+                if didReceiveHeaders {
+                    debugLog("Proxy stream failed: timed out during stream (idle timeout)")
+                } else {
+                    debugLog("Proxy stream failed: timed out waiting for response headers")
+                }
+                await MainActor.run { onError(ProxyLLMError.timeout(seconds: timeoutSeconds)) }
+            } else {
+                debugLog("Proxy stream failed: \(urlError.localizedDescription)")
+                await MainActor.run { onError(ProxyLLMError.unreachable) }
             }
         } catch {
+            headerWatchdog.cancel()
+            debugLog("Proxy stream failed: \(error.localizedDescription)")
             await MainActor.run {
                 onError(ProxyLLMError.unreachable)
             }
@@ -285,28 +387,36 @@ final class ProxyLLMService: LLMProvider {
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void
     ) async {
-        guard let jsonData = dataLine.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-            return
-        }
-
         switch eventType {
         case "delta":
             // data: {"text": "..."}
+            guard let jsonData = dataLine.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                return
+            }
             if let text = json["text"] as? String {
                 await MainActor.run { onChunk(text) }
             }
 
         case "done":
             // data: {"usage": {...}}
+            debugLog("Done event received; completing stream")
             await MainActor.run { onComplete() }
 
         case "error":
             // data: {"error": {"code": "...", "message": "...", "details": {...}}}
+            guard let jsonData = dataLine.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+                await MainActor.run { onError(ProxyLLMError.validationError("Stream error")) }
+                return
+            }
             if let errorObj = json["error"] as? [String: Any] {
                 let code = errorObj["code"] as? String ?? "unknown"
                 let message = errorObj["message"] as? String ?? "Stream error"
                 let details = errorObj["details"] as? [String: Any]
+                let detailsKeys = details.map { $0.keys.sorted().joined(separator: ",") } ?? "nil"
+                let reason = (details?["reason"] as? String) ?? "nil"
+                debugLog("Error event received code=\(code) message=\(message) detailsKeys=\(detailsKeys) reason=\(reason)")
                 let error = mapProxyError(
                     statusCode: 0,
                     code: code,

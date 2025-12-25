@@ -207,6 +207,7 @@ struct ProxyQuotaDetails {
 /// Errors specific to proxy LLM requests
 enum ProxyLLMError: LocalizedError {
     case unreachable                                // Network error
+    case timeout(seconds: Int)                      // No response/first byte within timeout
     case invalidKey                                 // 401: key invalid/expired
     case keyBoundElsewhere(supportId: String?)      // 401: key bound to different device
     case rateLimited(retryAfter: Int?)              // 429: req/min exceeded
@@ -219,6 +220,8 @@ enum ProxyLLMError: LocalizedError {
         switch self {
         case .unreachable:
             return "AI unavailable. Check your connection."
+        case .timeout(let seconds):
+            return "AI request timed out after \(seconds)s. Please try again."
         case .invalidKey:
             return "Device key invalid or expired. Please re-enter in Settings."
         case .keyBoundElsewhere(let supportId):
@@ -247,6 +250,7 @@ enum ProxyLLMError: LocalizedError {
     var errorCode: String {
         switch self {
         case .unreachable: return "proxy_unreachable"
+        case .timeout: return "proxy_timeout"
         case .invalidKey: return "invalid_key"
         case .keyBoundElsewhere: return "key_bound_elsewhere"
         case .rateLimited: return "rate_limited"

@@ -873,8 +873,18 @@ actor DeviceKeyService {
             let validation = try decoder.decode(ProxyAuthValidationResponse.self, from: responseData)
 
             // Check if bound to different device
-            if let boundDeviceId = validation.boundDeviceId, boundDeviceId != data.deviceId {
-                throw DeviceKeyError.boundToOtherDevice
+            if let boundDeviceId = validation.boundDeviceId {
+                let local = data.deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+                let remote = boundDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                // Prefer UUID parsing to avoid case/format mismatches (proxy may normalize UUID strings).
+                if let localUUID = UUID(uuidString: local), let remoteUUID = UUID(uuidString: remote) {
+                    if localUUID != remoteUUID {
+                        throw DeviceKeyError.boundToOtherDevice
+                    }
+                } else if local.lowercased() != remote.lowercased() {
+                    throw DeviceKeyError.boundToOtherDevice
+                }
             }
 
             return validation
