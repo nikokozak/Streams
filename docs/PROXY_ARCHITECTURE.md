@@ -2,6 +2,14 @@
 
 Ticker Proxy enables shipping the app without embedding provider API keys and provides metering, quotas, diagnostics, and support tooling.
 
+Status:
+- Proxy is implemented (Ticker-Proxy repo).
+- Ticker is in **proxy-only** posture: no local OpenAI/Anthropic/Perplexity calls or keys.
+- Routing is evolving to: **client-side intent → proxy-side provider/model selection**.
+
+For the exhaustive implementation plan (single source of truth):
+- `docs/PROXY_ONLY_FINALIZATION_PLAN.md`
+
 ## Goals (alpha)
 
 - App uses **Ticker-native API** (provider-agnostic).
@@ -63,10 +71,11 @@ Notes:
 `POST /v1/llm/request`
 - Body includes:
   - provider (optional; supported values: `openai`, `anthropic`, `perplexity`)
-  - model
+  - model (client may send `"default"` to let proxy pick via env-configured defaults)
   - messages (each `content` is either a string or an array of parts for multimodal prompts)
     - For alpha vision: send **base64** image parts (`media_type` + `data`) rather than URL images
   - streaming flag (`stream: true` uses SSE)
+  - intent (optional; client-side classification result used by the proxy for routing, e.g. search → Perplexity)
   - metadata (stream id, cell id) *only if non-sensitive*
 - Returns:
   - streaming or non-stream response

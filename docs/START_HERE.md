@@ -20,7 +20,8 @@ This folder defines the “professional mode” workflow for Ticker and the mini
 
 4) **Proxy + diagnostics**
    - Read `docs/PROXY_ARCHITECTURE.md` and `docs/PRIVACY_DIAGNOSTICS.md`
-   - Implement device keys, metering/quotas, request correlation, and 30‑day log retention
+   - For proxy-only finalization (no local vendor keys/calls) and intent-based routing, use:
+     - `docs/PROXY_ONLY_FINALIZATION_PLAN.md`
 
 5) **Alpha ops**
    - Read `docs/ALPHA_READINESS_CHECKLIST.md`
@@ -41,4 +42,3 @@ This folder defines the “professional mode” workflow for Ticker and the mini
 - Prefer “boring and reliable” over “clever”.
 - Never ship a migration without a backup and a downgrade story.
 - Treat the proxy request ID as your primary debugging handle.
-
