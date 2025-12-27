@@ -239,7 +239,10 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
   const showOverlay = Boolean(id && overlayCellId === id);
 
   // Canonical cell data from store (attrs can be stale)
-  const cell = useBlockStore((s) => (id ? s.getBlock(id) : undefined));
+  // NOTE: We access s.blocks.get(id) directly instead of s.getBlock(id) because
+  // getBlock uses get() internally which bypasses Zustand's subscription tracking.
+  // This ensures re-renders when the cell data changes (e.g., restatement updates).
+  const cell = useBlockStore((s) => (id ? s.blocks.get(id) : undefined));
 
   // IMPORTANT: node.attrs can be stale for dynamic data (type/model/live) because we don't
   // always update node attrs when store changes. Use store as source of truth for UI chrome.
@@ -620,6 +623,13 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
 
       {/* Thinking window overlay - shown during streaming/refreshing */}
       {showSpinner && <ThinkingWindow />}
+
+      {/* Restatement header - shown for AI cells with restatement */}
+      {isAiBlock && cell?.restatement && !showSpinner && (
+        <div className="cell-restatement-header" contentEditable={false}>
+          {cell.restatement}
+        </div>
+      )}
 
       {/* Content area - editable */}
       <NodeViewContent className="cell-block-content" />
