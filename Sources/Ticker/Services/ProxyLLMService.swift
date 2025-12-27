@@ -77,13 +77,17 @@ final class ProxyLLMService: LLMProvider {
         // Build request body in proxy format
         let messages = buildProxyMessages(from: request)
         let provider = determineProvider(for: request)
-        let model = determineModel(for: request)
-        let requestBody: [String: Any] = [
-            "model": model,
+        var requestBody: [String: Any] = [
+            "model": "default",  // Let proxy resolve model based on provider + vision
             "messages": messages,
             "provider": provider,
             "stream": true
         ]
+
+        // Include intent if available (for smart routing on proxy side)
+        if let intent = request.intent {
+            requestBody["intent"] = intent.toDictionary()
+        }
 
         guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
             await MainActor.run {
@@ -110,7 +114,8 @@ final class ProxyLLMService: LLMProvider {
 
         // Add diagnostic headers (conditional on user preference)
         let requestId = await deviceKeyService.applyDiagnosticsHeaders(to: &urlRequest)
-        debugLog("Starting stream request provider=\(provider) model=\(model) hasImages=\(request.hasImages) requestId=\(requestId ?? "nil") url=\(url.absoluteString)")
+        let intentType = request.intent?.type ?? "none"
+        debugLog("Starting stream request provider=\(provider) intent=\(intentType) hasImages=\(request.hasImages) requestId=\(requestId ?? "nil") url=\(url.absoluteString)")
         debugLog("Awaiting response headers (idle timeout=\(Int(urlRequest.timeoutInterval))s)")
 
         var didReceiveHeaders = false
@@ -281,6 +286,199 @@ final class ProxyLLMService: LLMProvider {
         }
     }
 
+    // MARK: - Non-Streaming Methods
+
+    /// Generate a restatement/heading for user input (non-streaming)
+    /// Returns nil if restatement is "NONE" or empty
+    func generateRestatement(for input: String) async -> String? {
+        // Get credentials from device key service
+        let headers = await deviceKeyService.getProxyHeaders()
+        guard let headers else {
+            debugLog("Restatement failed: no proxy headers")
+            return nil
+        }
+
+        // Build request URL
+        guard let url = URL(string: "\(proxyBaseURL)/v1/llm/request") else {
+            debugLog("Restatement failed: invalid proxy URL")
+            return nil
+        }
+
+        // Build request body (non-streaming)
+        let provider = determineProvider(for: LLMRequest(systemPrompt: "", messages: []))
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": Prompts.restatement],
+            ["role": "user", "content": input]
+        ]
+        let requestBody: [String: Any] = [
+            "model": "default",
+            "messages": messages,
+            "provider": provider,
+            "stream": false
+        ]
+
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            debugLog("Restatement failed: failed to encode request")
+            return nil
+        }
+
+        // Build URL request
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = bodyData
+        urlRequest.timeoutInterval = 30  // Short timeout for quick restatement
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Add functional headers
+        for (key, value) in headers {
+            urlRequest.setValue(value, forHTTPHeaderField: key)
+        }
+
+        // Add diagnostic headers
+        let requestId = await deviceKeyService.applyDiagnosticsHeaders(to: &urlRequest)
+        debugLog("Restatement request requestId=\(requestId ?? "nil")")
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                debugLog("Restatement failed: invalid response type")
+                return nil
+            }
+
+            // Record request ID if available
+            if let id = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId {
+                await deviceKeyService.recordRequestId(id, endpoint: "llm")
+            }
+
+            guard httpResponse.statusCode == 200 else {
+                debugLog("Restatement failed: status \(httpResponse.statusCode)")
+                return nil
+            }
+
+            // Parse response
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let outputText = json["output_text"] as? String else {
+                debugLog("Restatement failed: invalid response format")
+                return nil
+            }
+
+            let trimmed = outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed == "NONE" || trimmed.isEmpty {
+                debugLog("Restatement returned NONE")
+                return nil
+            }
+
+            debugLog("Restatement generated: \(trimmed.prefix(50))...")
+            return trimmed
+
+        } catch {
+            debugLog("Restatement failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Generate a short label for a modifier prompt (non-streaming)
+    func generateLabel(for prompt: String) async throws -> String {
+        // Get credentials from device key service
+        let headers = await deviceKeyService.getProxyHeaders()
+        guard let headers else {
+            throw ProxyLLMError.invalidKey
+        }
+
+        // Build request URL
+        guard let url = URL(string: "\(proxyBaseURL)/v1/llm/request") else {
+            throw ProxyLLMError.validationError("Invalid proxy URL")
+        }
+
+        // Build request body (non-streaming)
+        let provider = determineProvider(for: LLMRequest(systemPrompt: "", messages: []))
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": Prompts.modifierLabel],
+            ["role": "user", "content": prompt]
+        ]
+        let requestBody: [String: Any] = [
+            "model": "default",
+            "messages": messages,
+            "provider": provider,
+            "stream": false
+        ]
+
+        guard let bodyData = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            throw ProxyLLMError.validationError("Failed to encode request")
+        }
+
+        // Build URL request
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = bodyData
+        urlRequest.timeoutInterval = 30
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        // Add functional headers
+        for (key, value) in headers {
+            urlRequest.setValue(value, forHTTPHeaderField: key)
+        }
+
+        // Add diagnostic headers
+        let requestId = await deviceKeyService.applyDiagnosticsHeaders(to: &urlRequest)
+        debugLog("Label generation request requestId=\(requestId ?? "nil")")
+
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ProxyLLMError.validationError("Invalid response")
+        }
+
+        // Record request ID if available
+        if let id = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId {
+            await deviceKeyService.recordRequestId(id, endpoint: "llm")
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            debugLog("Label generation failed: status \(httpResponse.statusCode)")
+            throw ProxyLLMError.serverError(statusCode: httpResponse.statusCode, requestId: requestId)
+        }
+
+        // Parse response
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let outputText = json["output_text"] as? String else {
+            throw ProxyLLMError.validationError("Invalid response format")
+        }
+
+        let label = outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        debugLog("Label generated: \(label)")
+        return label
+    }
+
+    /// Apply a modifier to content with streaming
+    func applyModifier(
+        currentContent: String,
+        modifierPrompt: String,
+        onChunk: @escaping (String) -> Void,
+        onComplete: @escaping () -> Void,
+        onError: @escaping (Error) -> Void
+    ) async {
+        // Build a streaming request for the modifier
+        let userPrompt = "Content to transform:\n\n\(currentContent)\n\n---\n\nInstruction: \(modifierPrompt)"
+        let request = LLMRequest(
+            systemPrompt: Prompts.applyModifier,
+            messages: [LLMMessage(role: "user", content: userPrompt)],
+            temperature: 0.7,
+            maxTokens: 2048
+        )
+
+        // Use the existing stream method
+        await stream(
+            request: request,
+            onChunk: onChunk,
+            onComplete: onComplete,
+            onError: onError
+        )
+    }
+
     // MARK: - Message Building
 
     /// Convert LLMRequest messages to proxy format
@@ -346,28 +544,12 @@ final class ProxyLLMService: LLMProvider {
         return (mediaType, dataPart)
     }
 
-    // MARK: - Model/Provider Selection
+    // MARK: - Provider Selection
 
-    // Model IDs (mirroring AIService and AnthropicService)
-    private static let openaiTextModel = "gpt-4o-mini"
-    private static let openaiVisionModel = "gpt-4o"
-    private static let anthropicTextModel = "claude-sonnet-4-20250514"
-    private static let anthropicVisionModel = "claude-sonnet-4-20250514"
-
-    /// Determine which model to request based on settings and request type
-    private func determineModel(for request: LLMRequest) -> String {
-        let defaultProvider = SettingsService.shared.defaultModel
-
-        switch defaultProvider {
-        case .openai:
-            return request.hasImages ? Self.openaiVisionModel : Self.openaiTextModel
-        case .anthropic:
-            return request.hasImages ? Self.anthropicVisionModel : Self.anthropicTextModel
-        }
-    }
-
-    /// Determine which provider to use based on settings
+    /// Determine which provider to use based on user settings (preference hint for proxy)
     private func determineProvider(for request: LLMRequest) -> String {
+        // This is a preference hint - the proxy may override based on intent
+        // (e.g., search intent routes to Perplexity regardless of this preference)
         switch SettingsService.shared.defaultModel {
         case .openai:
             return "openai"

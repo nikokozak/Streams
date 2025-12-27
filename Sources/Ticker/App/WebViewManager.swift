@@ -11,6 +11,7 @@ final class WebViewManager: NSObject {
     private let aiService: AIService
     private let anthropicService: AnthropicService
     private let perplexityService: PerplexityService
+    private let proxyService: ProxyLLMService  // For proxy-mode restatement/modifiers
     let orchestrator: AIOrchestrator  // Exposed for Quick Panel ephemeral AI
     private let dependencyService: DependencyService
     private var processingService: ProcessingService?
@@ -49,16 +50,14 @@ final class WebViewManager: NSObject {
         self.aiService = AIService()
         self.anthropicService = AnthropicService()
         self.perplexityService = PerplexityService()
+        self.proxyService = ProxyLLMService()
 
         // Initialize RAG services
         self.embeddingService = EmbeddingService()
         self.chunkingService = ChunkingService()
 
-        // Initialize orchestrator and register providers
+        // Initialize orchestrator (proxy-only mode, no vendor provider registration)
         self.orchestrator = AIOrchestrator()
-        orchestrator.register(aiService)
-        orchestrator.register(anthropicService)
-        orchestrator.register(perplexityService)
 
         // Initialize dependency service
         self.dependencyService = DependencyService()
@@ -236,17 +235,12 @@ final class WebViewManager: NSObject {
         }
     }
 
-    /// Load the MLX classifier in the background (only if smart routing enabled and Perplexity configured)
+    /// Load the MLX classifier in the background (only if smart routing enabled)
     private func loadMLXClassifier() {
-        // Only load classifier if smart routing is enabled and Perplexity is configured
+        // Only load classifier if smart routing is enabled
+        // Note: No vendor keys required - classifier runs locally, proxy handles routing
         guard SettingsService.shared.smartRoutingEnabled else {
             print("MLX classifier skipped: smart routing disabled")
-            classifierSkipped = true
-            return
-        }
-        guard let perplexityKey = SettingsService.shared.perplexityAPIKey,
-              !perplexityKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            print("MLX classifier skipped: Perplexity API key not configured")
             classifierSkipped = true
             return
         }
@@ -818,11 +812,10 @@ final class WebViewManager: NSObject {
             Task { [weak self] in
                 guard let self else { return }
 
-                // Check if any AI is available (proxy mode or vendor keys)
+                // Proxy-only mode: all AI goes through proxy
                 let proxyUsable = await DeviceKeyService.shared.currentState.isUsable
-                let hasVendorKey = self.aiService.isConfigured || self.anthropicService.isConfigured
 
-                guard proxyUsable || hasVendorKey else {
+                guard proxyUsable else {
                     await MainActor.run {
                         onError(OrchestratorError.noProviderAvailable)
                     }
@@ -848,18 +841,25 @@ final class WebViewManager: NSObject {
                 )
             }
 
-            // Generate restatement asynchronously (use original, not resolved, for better heading)
-            aiService.generateRestatement(for: currentCell) { [weak self] restatement in
-                guard let self, let restatement else { return }
+            // Generate restatement asynchronously (proxy-only mode)
+            Task { [weak self] in
+                guard let self else { return }
+
+                // Always use proxy - no vendor fallback
+                let restatement = await self.proxyService.generateRestatement(for: currentCell)
+
+                guard let restatement else { return }
 
                 // Send restatement to frontend
-                self.bridgeService.send(BridgeMessage(
-                    type: "restatementGenerated",
-                    payload: [
-                        "cellId": AnyCodable(cellId),
-                        "restatement": AnyCodable(restatement)
-                    ]
-                ))
+                await MainActor.run {
+                    self.bridgeService.send(BridgeMessage(
+                        type: "restatementGenerated",
+                        payload: [
+                            "cellId": AnyCodable(cellId),
+                            "restatement": AnyCodable(restatement)
+                        ]
+                    ))
+                }
 
                 // Also persist to database if we have a stream ID and persistence
                 if let persistence = self.persistence,
@@ -883,20 +883,12 @@ final class WebViewManager: NSObject {
 
             print("[Modifier] Received request - cellId: \(cellId), prompt: \(modifierPrompt.prefix(50))")
 
-            // Check if configured
-            guard aiService.isConfigured else {
-                print("[Modifier] Error: API not configured")
-                bridgeService.send(BridgeMessage(
-                    type: "modifierError",
-                    payload: ["cellId": AnyCodable(cellId), "error": AnyCodable("OpenAI API key not configured.")]
-                ))
-                return
-            }
+            // Proxy-only mode: always use proxy. If no device key, proxy will return auth error.
 
             // First, generate a short label for the modifier
             var modifierLabel = ""
             do {
-                modifierLabel = try await generateModifierLabel(prompt: modifierPrompt)
+                modifierLabel = try await proxyService.generateLabel(for: modifierPrompt)
                 print("[Modifier] Generated label: \(modifierLabel)")
             } catch {
                 print("[Modifier] Label generation failed: \(error), using truncated prompt")
@@ -950,9 +942,9 @@ final class WebViewManager: NSObject {
                 ))
             }
 
-            // Apply the modifier using AI
-            print("[Modifier] Starting AI request")
-            aiService.applyModifier(
+            // Apply the modifier using proxy (proxy-only mode)
+            print("[Modifier] Starting AI request via proxy")
+            await proxyService.applyModifier(
                 currentContent: currentContent,
                 modifierPrompt: modifierPrompt,
                 onChunk: onChunk,
@@ -1524,11 +1516,6 @@ final class WebViewManager: NSObject {
             dict["hasExtractedText"] = true
         }
         return dict
-    }
-
-    /// Generate a short label for a modifier prompt using AI
-    private func generateModifierLabel(prompt: String) async throws -> String {
-        return try await aiService.generateLabel(for: prompt)
     }
 
     /// Get settings enriched with classifier state

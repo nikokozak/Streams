@@ -51,6 +51,29 @@ struct LLMMessage {
     var hasImages: Bool { !imageURLs.isEmpty }
 }
 
+/// Intent for proxy routing (matches proxy's expected schema)
+struct LLMIntent {
+    let type: String
+    let confidence: Float
+    let source: String
+
+    /// Convert ClassificationResult to LLMIntent
+    init(from result: ClassificationResult) {
+        self.type = result.intent.rawValue
+        self.confidence = result.confidence
+        self.source = "mlx"
+    }
+
+    /// Convert to dictionary for JSON serialization
+    func toDictionary() -> [String: Any] {
+        return [
+            "type": type,
+            "confidence": confidence,
+            "source": source
+        ]
+    }
+}
+
 /// A standardized request to an LLM provider
 struct LLMRequest {
     /// System prompt for the model
@@ -65,16 +88,21 @@ struct LLMRequest {
     /// Maximum tokens to generate (nil for provider default)
     var maxTokens: Int?
 
+    /// Optional intent for proxy routing (set by orchestrator when using smart routing)
+    var intent: LLMIntent?
+
     init(
         systemPrompt: String,
         messages: [LLMMessage],
         temperature: Double = 0.7,
-        maxTokens: Int? = nil
+        maxTokens: Int? = nil,
+        intent: LLMIntent? = nil
     ) {
         self.systemPrompt = systemPrompt
         self.messages = messages
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.intent = intent
     }
 
     /// Convenience initializer for text-only messages
