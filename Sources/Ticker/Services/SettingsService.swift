@@ -171,8 +171,16 @@ final class SettingsService {
 
     // MARK: - Routing Settings
 
+    /// Whether to use MLX classifier for smart model routing.
+    /// Defaults to true if not explicitly set (alpha posture: smart routing ON by default).
     var smartRoutingEnabled: Bool {
-        get { defaults.bool(forKey: Keys.smartRoutingEnabled) }
+        get {
+            // Default to true if not set
+            if defaults.object(forKey: Keys.smartRoutingEnabled) == nil {
+                return true
+            }
+            return defaults.bool(forKey: Keys.smartRoutingEnabled)
+        }
         set { defaults.set(newValue, forKey: Keys.smartRoutingEnabled) }
     }
 
@@ -232,8 +240,8 @@ final class SettingsService {
     /// Get all settings as a dictionary for sending to React
     func allSettings() -> [String: Any] {
         [
-            "proxyOnlyMode": true,
-            "smartRoutingEnabled": false,
+            "proxyOnlyMode": Self.proxyOnlyMode,
+            "smartRoutingEnabled": smartRoutingEnabled,
             "defaultModel": defaultModel.rawValue,
             "appearance": appearance.rawValue,
             "diagnosticsEnabled": diagnosticsEnabled

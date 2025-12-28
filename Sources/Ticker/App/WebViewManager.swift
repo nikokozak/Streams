@@ -8,10 +8,7 @@ final class WebViewManager: NSObject {
     let bridgeService: BridgeService
     let persistence: PersistenceService?
     private let sourceService: SourceService?
-    private let aiService: AIService
-    private let anthropicService: AnthropicService
-    private let perplexityService: PerplexityService
-    private let proxyService: ProxyLLMService  // For proxy-mode restatement/modifiers
+    private let proxyService: ProxyLLMService  // For proxy-mode AI operations
     let orchestrator: AIOrchestrator  // Exposed for Quick Panel ephemeral AI
     private let dependencyService: DependencyService
     private var processingService: ProcessingService?
@@ -46,10 +43,7 @@ final class WebViewManager: NSObject {
 
         self.webView = DroppableWebView(frame: .zero, configuration: config)
 
-        // Initialize services
-        self.aiService = AIService()
-        self.anthropicService = AnthropicService()
-        self.perplexityService = PerplexityService()
+        // Initialize proxy service (all AI operations go through proxy in alpha)
         self.proxyService = ProxyLLMService()
 
         // Initialize RAG services
@@ -828,6 +822,7 @@ final class WebViewManager: NSObject {
                     streamId: streamIdForRAG,
                     priorCells: priorCells,
                     sourceContext: sourceContext,
+                    includeHeading: true,  // Think flow: model generates "## Heading" as first line
                     onChunk: onChunk,
                     onComplete: onComplete,
                     onError: onError,
@@ -841,36 +836,8 @@ final class WebViewManager: NSObject {
                 )
             }
 
-            // Generate restatement asynchronously (proxy-only mode)
-            Task { [weak self] in
-                guard let self else { return }
-
-                // Always use proxy - no vendor fallback
-                let restatement = await self.proxyService.generateRestatement(for: currentCell)
-
-                guard let restatement else { return }
-
-                // Send restatement to frontend
-                await MainActor.run {
-                    self.bridgeService.send(BridgeMessage(
-                        type: "restatementGenerated",
-                        payload: [
-                            "cellId": AnyCodable(cellId),
-                            "restatement": AnyCodable(restatement)
-                        ]
-                    ))
-                }
-
-                // Also persist to database if we have a stream ID and persistence
-                if let persistence = self.persistence,
-                   let cellUUID = UUID(uuidString: cellId) {
-                    do {
-                        try persistence.updateCellRestatement(cellId: cellUUID, restatement: restatement)
-                    } catch {
-                        print("Failed to save restatement: \(error)")
-                    }
-                }
-            }
+            // NOTE: Restatement is now included in the streamed response via the heading-enabled prompt.
+            // No separate restatement call needed (Option A from ALPHA_STABILITY_PLAN.md).
 
         case "applyModifier":
             guard let payload = message.payload,
@@ -1528,7 +1495,7 @@ final class WebViewManager: NSObject {
                 settings["classifierError"] = error.localizedDescription
             }
         } else if classifierSkipped {
-            // Classifier was intentionally skipped (smart routing disabled or no API key)
+            // Classifier was intentionally skipped (smart routing disabled by user)
             settings["classifierReady"] = false
             settings["classifierLoading"] = false
         } else {

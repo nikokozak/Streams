@@ -7,8 +7,9 @@ Status:
 - Ticker is in **proxy-only** posture: no local OpenAI/Anthropic/Perplexity calls or keys.
 - Routing is evolving to: **client-side intent → proxy-side provider/model selection**.
 
-For the exhaustive implementation plan (single source of truth):
-- `docs/PROXY_ONLY_FINALIZATION_PLAN.md`
+Contract + implementation notes live in:
+- `docs/GITHUB_BACKLOG_ALPHA.md` (Epic C/D acceptance criteria + integration notes)
+- `Ticker-Proxy/openapi/v1.yaml` (machine-readable API contract)
 
 ## Goals (alpha)
 
@@ -29,7 +30,7 @@ For the exhaustive implementation plan (single source of truth):
 ## Authentication model (per-device key)
 
 - Each device receives a key (e.g., `tk_live_...`).
-- App generates a `device_id` (UUID) and stores it in Keychain.
+- App generates a `device_id` (UUID) and persists it in Application Support (via `DeviceKeyService`, alongside the proxy device key).
 - First successful request binds the key to `device_id`.
 - Subsequent requests with a different `device_id` are rejected with `401`.
 
@@ -47,19 +48,22 @@ Client integration reference:
 
 ## Contract: headers
 
-Requests must include:
+Requests must include (functional):
 - `Authorization: Bearer <device_key>`
 - `X-Ticker-Device-Id: <uuid>`
+
+Requests may include (diagnostics; user-toggleable):
+- `X-Ticker-Request-Id: <string>` (opaque request correlation id)
 - `X-Ticker-App-Version: <YYYY.MM.patch>`
 - `X-Ticker-Platform: macOS`
 - `X-Ticker-OS-Version: <version>`
 
-Responses must include:
-- `X-Ticker-Request-Id: <string>` (opaque request correlation id)
+Responses include:
+- `X-Ticker-Request-Id: <string>` (echoed correlation id when provided; otherwise proxy-generated)
 
 Notes:
-- Ticker should generate a UUID per request and send it as `X-Ticker-Request-Id`.
-- The proxy will echo/return `X-Ticker-Request-Id` for every response (including errors). Treat it as an opaque string (not guaranteed to be a UUID).
+- Treat `X-Ticker-Request-Id` as an opaque string (not guaranteed to be a UUID).
+- When diagnostics are disabled, Ticker omits diagnostic headers but still records request IDs locally for user-initiated support bundles.
 
 ## Endpoints (v1)
 

@@ -20,10 +20,12 @@ This folder defines the “professional mode” workflow for Ticker and the mini
 
 4) **Proxy + diagnostics**
    - Read `docs/PROXY_ARCHITECTURE.md` and `docs/PRIVACY_DIAGNOSTICS.md`
-   - For proxy-only finalization (no local vendor keys/calls) and intent-based routing, use:
-     - `docs/PROXY_ONLY_FINALIZATION_PLAN.md`
+   - Use `docs/GITHUB_BACKLOG_ALPHA.md` as the canonical alpha issue list (Epic C/D integration notes included)
 
-5) **Alpha ops**
+5) **Stability (2-week ship)**
+   - Option A (single-call heading+body) + house-cleaning audit: `docs/ALPHA_STABILITY_PLAN.md`
+
+6) **Alpha ops**
    - Read `docs/ALPHA_READINESS_CHECKLIST.md`
    - Read `docs/ALPHA_SUPPORT.md` (in-app feedback → manual triage)
    - Read `docs/WEBSITE_REQUIREMENTS.md`

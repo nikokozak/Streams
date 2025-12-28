@@ -36,6 +36,7 @@ final class AIOrchestrator {
     ///   - streamId: Optional stream ID for RAG retrieval
     ///   - priorCells: Conversation history (each has "content", "type", optionally "imageURLs")
     ///   - sourceContext: Fallback source context (used if RAG unavailable)
+    ///   - includeHeading: If true, use prompt that requires "## Heading" on first line (for think flow)
     ///   - onModelSelected: Called with the model ID when provider is selected
     func route(
         query: String,
@@ -43,6 +44,7 @@ final class AIOrchestrator {
         streamId: UUID? = nil,
         priorCells: [[String: Any]],
         sourceContext: String?,
+        includeHeading: Bool = false,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void,
@@ -94,7 +96,8 @@ final class AIOrchestrator {
             queryImages: queryImages,
             priorCells: priorCells,
             sourceContext: contextToUse,
-            classificationResult: classificationResult
+            classificationResult: classificationResult,
+            includeHeading: includeHeading
         ).truncated()
 
         // Stream the response
@@ -114,19 +117,20 @@ final class AIOrchestrator {
         queryImages: [String],
         priorCells: [[String: Any]],
         sourceContext: String?,
-        classificationResult: ClassificationResult?
+        classificationResult: ClassificationResult?,
+        includeHeading: Bool = false
     ) -> LLMRequest {
-        // Select appropriate system prompt based on intent
+        // Select appropriate system prompt based on intent and heading requirement
         let systemPrompt: String
         switch intent {
         case .search:
-            systemPrompt = Prompts.search
+            systemPrompt = includeHeading ? Prompts.searchWithHeading : Prompts.search
         case .summarize:
-            systemPrompt = Prompts.applyModifier // Could add specific summarize prompt
+            systemPrompt = Prompts.applyModifier // Modifiers never include heading
         case .expand, .rewrite, .extract:
             systemPrompt = Prompts.applyModifier
         case .knowledge, .ambiguous:
-            systemPrompt = Prompts.thinkingPartner
+            systemPrompt = includeHeading ? Prompts.thinkingPartnerWithHeading : Prompts.thinkingPartner
         }
 
         // Build messages from conversation history with image support

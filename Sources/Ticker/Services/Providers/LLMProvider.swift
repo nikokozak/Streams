@@ -167,7 +167,8 @@ struct LLMRequest {
                 systemPrompt: systemPrompt,
                 messages: [],
                 temperature: temperature,
-                maxTokens: maxTokens
+                maxTokens: maxTokens,
+                intent: intent
             )
         }
 
@@ -196,7 +197,8 @@ struct LLMRequest {
             systemPrompt: systemPrompt,
             messages: keptMessages,
             temperature: temperature,
-            maxTokens: maxTokens
+            maxTokens: maxTokens,
+            intent: intent
         )
     }
 }

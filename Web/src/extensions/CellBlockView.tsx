@@ -624,12 +624,9 @@ export function CellBlockView({ node, updateAttributes, editor }: NodeViewProps)
       {/* Thinking window overlay - shown during streaming/refreshing */}
       {showSpinner && <ThinkingWindow />}
 
-      {/* Restatement header - shown for AI cells with restatement */}
-      {isAiBlock && cell?.restatement && !showSpinner && (
-        <div className="cell-restatement-header" contentEditable={false}>
-          {cell.restatement}
-        </div>
-      )}
+      {/* NOTE: Restatement is now part of the content (as ## heading), not a separate field.
+          The model outputs "## Heading\n\nBody" which becomes <h2>Heading</h2><p>Body</p> via markdownToHtml.
+          This makes the heading editable/deletable like normal content (Option A from ALPHA_STABILITY_PLAN.md). */}
 
       {/* Content area - editable */}
       <NodeViewContent className="cell-block-content" />
