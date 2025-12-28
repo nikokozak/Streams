@@ -37,10 +37,12 @@ final class AnthropicService: LLMProvider {
     /// LLMProvider streaming implementation
     func stream(
         request: LLMRequest,
+        onModelSelected: ((String, String) -> Void)? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void
     ) async {
+        // Legacy vendor service - onModelSelected not used
         guard let apiKey else {
             onError(LLMProviderError.notConfigured(name))
             return

@@ -51,8 +51,15 @@ final class ProxyLLMService: LLMProvider {
     }
 
     /// Stream a completion request through the proxy
+    /// - Parameters:
+    ///   - request: The LLM request to stream
+    ///   - onModelSelected: Called with resolved provider/model from proxy headers (before first chunk)
+    ///   - onChunk: Called for each streamed text chunk
+    ///   - onComplete: Called when stream completes successfully
+    ///   - onError: Called if an error occurs
     func stream(
         request: LLMRequest,
+        onModelSelected: ((String, String) -> Void)? = nil,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void
@@ -147,6 +154,18 @@ final class ProxyLLMService: LLMProvider {
             let responseRequestId = httpResponse.value(forHTTPHeaderField: "X-Ticker-Request-Id") ?? requestId
             debugLog("Response status=\(httpResponse.statusCode) contentType=\(httpResponse.value(forHTTPHeaderField: "Content-Type") ?? "nil") responseRequestId=\(responseRequestId ?? "nil")")
             didReceiveHeaders = true
+
+            // Read resolved provider/model from proxy headers
+            let resolvedProvider = httpResponse.value(forHTTPHeaderField: "X-Ticker-Provider") ?? provider
+            let resolvedModel = httpResponse.value(forHTTPHeaderField: "X-Ticker-Model") ?? "default"
+            debugLog("Resolved provider=\(resolvedProvider) model=\(resolvedModel) (requested provider=\(provider))")
+
+            // Notify caller of resolved model (before streaming starts)
+            if let onModelSelected {
+                await MainActor.run {
+                    onModelSelected(resolvedProvider, resolvedModel)
+                }
+            }
 
             // Record request ID if available (for support bundle)
             if let id = responseRequestId {

@@ -68,10 +68,7 @@ final class AIOrchestrator {
         }
 
         // Always use proxy service - no vendor fallback
-        let provider = proxyService
-
-        // Notify caller which model is being used
-        onModelSelected?(provider.modelId)
+        // Note: We don't call onModelSelected here; the proxy will tell us the resolved model via headers
 
         // Try RAG retrieval if available, otherwise use fallback source context
         var contextToUse = sourceContext
@@ -100,9 +97,15 @@ final class AIOrchestrator {
             includeHeading: includeHeading
         ).truncated()
 
-        // Stream the response
-        await provider.stream(
+        // Stream the response through proxy
+        // The proxy returns resolved provider/model in headers, which we pass to onModelSelected
+        await proxyService.stream(
             request: request,
+            onModelSelected: { provider, model in
+                // Format as "provider/model" for display (e.g., "perplexity/sonar")
+                let displayModel = "\(provider)/\(model)"
+                onModelSelected?(displayModel)
+            },
             onChunk: onChunk,
             onComplete: onComplete,
             onError: onError

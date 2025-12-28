@@ -18,11 +18,13 @@ protocol LLMProvider {
     /// Stream a completion request
     /// - Parameters:
     ///   - request: The LLM request parameters
+    ///   - onModelSelected: Optional callback with resolved (provider, model) from proxy headers
     ///   - onChunk: Called for each streamed chunk of content
     ///   - onComplete: Called when streaming finishes
     ///   - onError: Called if an error occurs
     func stream(
         request: LLMRequest,
+        onModelSelected: ((String, String) -> Void)?,
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping () -> Void,
         onError: @escaping (Error) -> Void
